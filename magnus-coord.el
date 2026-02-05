@@ -16,6 +16,7 @@
 ;;; Code:
 
 (require 'magnus-instances)
+(require 'filenotify)
 
 ;;; Customization
 
@@ -28,6 +29,133 @@
   "Path to the instructions file for agents (relative to project)."
   :type 'string
   :group 'magnus)
+
+(defcustom magnus-coord-mention-notify t
+  "If non-nil, automatically notify agents when they are @mentioned."
+  :type 'boolean
+  :group 'magnus)
+
+;;; @mention watching
+
+(defvar magnus-coord--watchers nil
+  "Alist of (directory . watch-descriptor) for coordination file watchers.")
+
+(defvar magnus-coord--last-content nil
+  "Alist of (directory . content-hash) to track changes.")
+
+(defvar magnus-coord--processed-mentions nil
+  "Alist of (directory . list-of-processed-mention-hashes) to avoid duplicates.")
+
+(defun magnus-coord-start-watching (directory)
+  "Start watching the coordination file in DIRECTORY for @mentions."
+  (let ((file (magnus-coord-file-path directory)))
+    ;; Remove existing watcher if any
+    (magnus-coord-stop-watching directory)
+    ;; Only watch if file exists
+    (when (file-exists-p file)
+      (let ((descriptor (file-notify-add-watch
+                         file
+                         '(change)
+                         (lambda (event)
+                           (magnus-coord--handle-file-change directory event)))))
+        (push (cons directory descriptor) magnus-coord--watchers)
+        ;; Initialize processed mentions from current content
+        (magnus-coord--init-processed-mentions directory)))))
+
+(defun magnus-coord-stop-watching (directory)
+  "Stop watching the coordination file in DIRECTORY."
+  (when-let ((entry (assoc directory magnus-coord--watchers)))
+    (file-notify-rm-watch (cdr entry))
+    (setq magnus-coord--watchers (assoc-delete-all directory magnus-coord--watchers))
+    (setq magnus-coord--processed-mentions
+          (assoc-delete-all directory magnus-coord--processed-mentions))))
+
+(defun magnus-coord-stop-all-watchers ()
+  "Stop all coordination file watchers."
+  (dolist (entry magnus-coord--watchers)
+    (ignore-errors (file-notify-rm-watch (cdr entry))))
+  (setq magnus-coord--watchers nil)
+  (setq magnus-coord--processed-mentions nil))
+
+(defun magnus-coord--init-processed-mentions (directory)
+  "Initialize processed mentions for DIRECTORY from current file content."
+  (let ((file (magnus-coord-file-path directory)))
+    (when (file-exists-p file)
+      (let ((mentions (magnus-coord--extract-mentions
+                       (with-temp-buffer
+                         (insert-file-contents file)
+                         (buffer-string)))))
+        (setf (alist-get directory magnus-coord--processed-mentions nil nil #'equal)
+              (mapcar #'magnus-coord--mention-hash mentions))))))
+
+(defun magnus-coord--handle-file-change (directory event)
+  "Handle a file change EVENT for DIRECTORY's coordination file."
+  (when (and magnus-coord-mention-notify
+             (eq (nth 1 event) 'changed))
+    (condition-case nil
+        (magnus-coord--check-new-mentions directory)
+      (error nil))))  ; Silently ignore errors
+
+(defun magnus-coord--check-new-mentions (directory)
+  "Check for new @mentions in DIRECTORY's coordination file."
+  (let* ((file (magnus-coord-file-path directory))
+         (content (when (file-exists-p file)
+                    (with-temp-buffer
+                      (insert-file-contents file)
+                      (buffer-string))))
+         (mentions (when content (magnus-coord--extract-mentions content)))
+         (processed (alist-get directory magnus-coord--processed-mentions nil nil #'equal)))
+    (dolist (mention mentions)
+      (let ((hash (magnus-coord--mention-hash mention)))
+        (unless (member hash processed)
+          ;; New mention - notify the agent
+          (magnus-coord--notify-mention directory mention)
+          (push hash processed))))
+    (setf (alist-get directory magnus-coord--processed-mentions nil nil #'equal)
+          processed)))
+
+(defun magnus-coord--extract-mentions (content)
+  "Extract all @mentions from CONTENT.
+Returns list of (agent-name . context-line) pairs."
+  (let (mentions)
+    (with-temp-buffer
+      (insert content)
+      (goto-char (point-min))
+      (while (re-search-forward "@\\([a-zA-Z][-a-zA-Z0-9_]*\\)" nil t)
+        (let ((agent (match-string 1))
+              (line (buffer-substring-no-properties
+                     (line-beginning-position)
+                     (line-end-position))))
+          (push (cons agent line) mentions))))
+    (nreverse mentions)))
+
+(defun magnus-coord--mention-hash (mention)
+  "Create a hash for MENTION to track duplicates."
+  (secure-hash 'md5 (format "%s:%s" (car mention) (cdr mention))))
+
+(defun magnus-coord--notify-mention (directory mention)
+  "Notify the agent named in MENTION within DIRECTORY."
+  (let* ((agent-name (car mention))
+         (context-line (cdr mention))
+         (instance (magnus-coord--find-instance-by-name agent-name directory)))
+    (when instance
+      (magnus-coord--send-mention-notification instance context-line))))
+
+(defun magnus-coord--find-instance-by-name (name directory)
+  "Find an instance with NAME working in DIRECTORY."
+  (cl-find-if (lambda (inst)
+                (and (string= (magnus-instance-name inst) name)
+                     (string= (magnus-instance-directory inst) directory)))
+              (magnus-instances-list)))
+
+(defun magnus-coord--send-mention-notification (instance context-line)
+  "Send a mention notification to INSTANCE with CONTEXT-LINE."
+  (when-let ((buffer (magnus-instance-buffer instance)))
+    (when (buffer-live-p buffer)
+      (let ((msg (format "*** You were mentioned in coordination file: %s" context-line)))
+        (with-current-buffer buffer
+          (vterm-send-string msg)
+          (vterm-send-return))))))
 
 ;;; Coordination file management
 
@@ -104,6 +232,9 @@ To talk to other agents, append to the Log section:
 ```markdown
 [HH:MM] your-name: Your message here. @other-agent if you need their attention.
 ```
+
+**Note:** When you @mention another agent, they will automatically receive a
+notification with your message. You don't need to wait for them to check the file.
 
 ## When You Finish
 
@@ -288,13 +419,24 @@ FILES is a list of files they're touching."
   (let ((name (magnus-instance-name instance)))
     (magnus-coord-ensure-file directory)
     (magnus-coord-ensure-instructions directory)
-    (magnus-coord-add-log directory name "Joined the session")))
+    (magnus-coord-add-log directory name "Joined the session")
+    ;; Start watching for @mentions if not already
+    (unless (assoc directory magnus-coord--watchers)
+      (magnus-coord-start-watching directory))))
 
 (defun magnus-coord-unregister-agent (directory instance)
   "Unregister INSTANCE from DIRECTORY's coordination file."
   (let ((name (magnus-instance-name instance)))
     (magnus-coord-clear-agent directory name)
-    (magnus-coord-add-log directory name "Left the session")))
+    (magnus-coord-add-log directory name "Left the session")
+    ;; Stop watching if no agents remain in this directory
+    (let ((remaining (cl-count-if
+                      (lambda (inst)
+                        (and (not (eq inst instance))
+                             (string= (magnus-instance-directory inst) directory)))
+                      (magnus-instances-list))))
+      (when (zerop remaining)
+        (magnus-coord-stop-watching directory)))))
 
 ;;; Display
 
