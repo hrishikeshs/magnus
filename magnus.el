@@ -2,8 +2,8 @@
 
 ;; Copyright (C) 2026 Hrishikesh S
 
-;; Author: Hrishikesh S <hrishikeshsathyian@gmail.com>
-;; Maintainer: Hrishikesh S <hrishikeshsathyian@gmail.com>
+;; Author: Hrishikesh S <hrish2006@gmail.com>
+;; Maintainer: Hrishikesh S <hrish2006@gmail.com>
 ;; Version: 0.1.0
 ;; Package-Requires: ((emacs "28.1") (vterm "0.0.2") (transient "0.4.0"))
 ;; Keywords: tools, processes, convenience
