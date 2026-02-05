@@ -1,15 +1,71 @@
-# magnus
+# Magnus
 
-Magnus is a magit-like interface built within Emacs for managing multiple Claude Code instances.
+A magit-inspired interface for managing multiple Claude Code instances within Emacs.
+
+Run multiple AI agents in parallel, let them communicate to avoid conflicts, and handle their permission requests one at a time.
+
+## Why Magnus?
+
+When working with Claude Code, you often want multiple agents working simultaneously:
+- One agent refactoring the auth module
+- Another writing tests
+- A third updating documentation
+
+But this creates problems:
+- **File conflicts**: Agents might edit the same files
+- **Context sharing**: How do agents know what others are doing?
+- **Permission chaos**: Multiple agents asking for input at once
+
+Magnus solves all of this.
 
 ## Features
 
-- **Instance management**: Create, kill, rename, and switch between Claude Code instances
-- **Status buffer**: See all instances at a glance with their status and working directory
-- **Agent coordination**: Agents communicate through a shared coordination file to avoid conflicts
-- **Shared context**: Per-project scratch buffer for notes and links that all agents can access
-- **URL fetching**: Paste URLs and magnus will fetch and cache the content
-- **Persistence**: State persists across Emacs sessions
+### Instance Management
+Spawn, kill, rename, and switch between Claude Code instances running in vterm buffers. Each instance gets a randomly generated name (like `swift-fox` or `keen-owl`) and runs in its own terminal.
+
+### Agent Coordination
+Agents communicate through a shared `.magnus-coord.md` file:
+
+```markdown
+## Active Work
+| Agent | Area | Status | Files |
+|-------|------|--------|-------|
+| swift-fox | auth module | in-progress | src/auth.ts, src/session.ts |
+| keen-owl | api tests | in-progress | tests/api/*.test.ts |
+
+## Log
+[10:30] swift-fox: Starting work on auth. Will touch src/auth/*.ts
+[10:31] keen-owl: Got it, I'll avoid those files. Working on API tests.
+[10:45] swift-fox: Auth done, committed. @keen-owl you can add auth tests now.
+[10:46] keen-owl: Thanks! On it.
+
+## Decisions
+- Using JWT for session tokens (swift-fox + keen-owl agreed)
+```
+
+Agents are automatically instructed to check and update this file, preventing them from stepping on each other's work.
+
+### Shared Context Buffer
+A per-project scratch buffer where you can paste notes, links, Confluence pages, Jira tickets, or any context you want all agents to access.
+
+- Paste URLs and magnus fetches + caches the content
+- Export to a file agents can read, or copy to clipboard
+- Persists across Emacs sessions (stored in `~/.emacs.d/magnus-context/`)
+
+### Attention Queue
+When agents need user input (permission prompts, confirmations), they join a queue:
+
+```
+Instances: 3 [2 need attention]
+```
+
+Magnus focuses one instance at a time. Handle the request, press `a`, and the next agent gets focus. No more competing popups.
+
+### Persistence
+Everything persists across Emacs sessions:
+- Running instances (reconnects if still alive)
+- Context buffers
+- Coordination state
 
 ## Requirements
 
@@ -19,23 +75,33 @@ Magnus is a magit-like interface built within Emacs for managing multiple Claude
 
 ## Installation
 
-### From MELPA (recommended)
+### From MELPA
 
 ```elisp
 (use-package magnus
-  :ensure t)
+  :ensure t
+  :bind (("C-c m" . magnus)
+         ("C-c M" . magnus-create-instance)))
 ```
 
-Or `M-x package-install RET magnus RET`
+Or: `M-x package-install RET magnus RET`
 
 ### From GitHub (Emacs 29+)
 
 ```elisp
-(use-package magnus
-  :vc (:url "https://github.com/hrishikeshs/magnus" :branch "master"))
+;; One-liner
+M-x package-vc-install RET https://github.com/hrishikeshs/magnus RET
 ```
 
-Or one-liner: `M-x package-vc-install RET https://github.com/hrishikeshs/magnus RET`
+Or in your config:
+```elisp
+(unless (package-installed-p 'magnus)
+  (package-vc-install "https://github.com/hrishikeshs/magnus"))
+
+(use-package magnus
+  :bind (("C-c m" . magnus)
+         ("C-c M" . magnus-create-instance)))
+```
 
 ### With straight.el
 
@@ -50,77 +116,98 @@ Or one-liner: `M-x package-vc-install RET https://github.com/hrishikeshs/magnus 
 (quelpa '(magnus :fetcher github :repo "hrishikeshs/magnus"))
 ```
 
-### Manual
+## Quick Start
+
+1. `M-x magnus` (or `C-c m`) — Open the status buffer
+2. `c` — Create a new Claude Code instance
+3. Choose a directory, and a vterm buffer opens with Claude running
+4. Create more instances with `c`
+5. Switch between them with `RET`
+6. Watch them coordinate in the status buffer
+
+## Key Bindings
+
+### Status Buffer (`*magnus*`)
+
+| Key   | Action                     |
+|-------|----------------------------|
+| `c`   | Create new instance        |
+| `RET` | Switch to instance         |
+| `k`   | Kill instance              |
+| `K`   | Force kill instance        |
+| `r`   | Rename instance            |
+| `R`   | Restart instance           |
+| `x`   | Open context buffer        |
+| `C`   | Open coordination file     |
+| `a`   | Next in attention queue    |
+| `A`   | Show attention queue       |
+| `n/p` | Navigate instances         |
+| `g`   | Refresh                    |
+| `?`   | Show transient help menu   |
+| `q`   | Quit                       |
+
+### Context Buffer
+
+| Key       | Action                      |
+|-----------|-----------------------------|
+| `C-c C-u` | Insert URL and fetch content|
+| `C-c C-f` | Fetch URL at point          |
+| `C-c C-e` | Export to `.magnus-context.md` in project |
+| `C-c C-c` | Copy buffer to clipboard    |
+| `C-c C-s` | Save                        |
+
+## How Coordination Works
+
+When you create an instance, magnus:
+
+1. Creates `.magnus-coord.md` in the project root
+2. Creates `.claude/magnus-instructions.md` with the coordination protocol
+3. Logs "Joined the session" in the coordination file
+
+The instructions tell agents to:
+- Check the coordination file before starting work
+- Announce what files they'll touch
+- Communicate with `@mentions` for other agents
+- Announce `[ATTENTION]` before requesting user input
+- Log when they finish so others can proceed
+
+This is advisory coordination — agents are instructed to follow the protocol, and Claude is good at it.
+
+## Customization
 
 ```elisp
-(add-to-list 'load-path "/path/to/magnus")
-(require 'magnus)
+;; Path to claude executable (default: "claude")
+(setq magnus-claude-executable "/path/to/claude")
+
+;; Default directory for new instances
+(setq magnus-default-directory "~/projects")
+
+;; Where to store state (default: ~/.emacs.d/magnus-state.el)
+(setq magnus-state-file "~/.emacs.d/magnus-state.el")
+
+;; Attention check interval in seconds (default: 2)
+(setq magnus-attention-check-interval 2)
+
+;; Patterns that indicate an instance needs attention
+(setq magnus-attention-patterns
+      '("\\[y/n\\]" "\\[Y/n\\]" "Allow\\?" "Proceed\\?"))
 ```
 
-## Usage
+## Architecture
 
-Run `M-x magnus` to open the status buffer.
-
-### Key bindings (status buffer)
-
-| Key   | Action                    |
-|-------|---------------------------|
-| `c`   | Create new instance       |
-| `RET` | Switch to instance        |
-| `k`   | Kill instance             |
-| `K`   | Force kill instance       |
-| `r`   | Rename instance           |
-| `R`   | Restart instance          |
-| `x`   | Open context buffer       |
-| `C`   | Open coordination file    |
-| `a`   | Next in attention queue   |
-| `A`   | Show attention queue      |
-| `g`   | Refresh                   |
-| `?`   | Show help menu            |
-| `q`   | Quit                      |
-
-### Context buffer
-
-The context buffer (`M-x magnus-context` or `x` in status buffer) is a per-project scratch pad for sharing notes, links, and context with your Claude Code instances.
-
-| Key       | Action                     |
-|-----------|----------------------------|
-| `C-c C-u` | Insert and fetch URL       |
-| `C-c C-f` | Fetch URL at point         |
-| `C-c C-e` | Export to temp file        |
-| `C-c C-c` | Copy to clipboard          |
-
-Content persists across sessions but is stored in `~/.emacs.d/magnus-context/`, not in your project.
-
-### Agent coordination
-
-When you create instances, magnus sets up a coordination system so agents can communicate:
-
-- **`.magnus-coord.md`**: Shared file where agents announce their work and communicate
-- **`.claude/magnus-instructions.md`**: Instructions for agents on how to use the coordination protocol
-
-Agents are instructed to:
-1. Check the coordination file before starting work
-2. Announce what files they're touching in the "Active Work" table
-3. Communicate with other agents in the "Log" section
-4. Record decisions that affect others
-
-This prevents agents from stepping on each other's work. The magnus status buffer shows active work and recent coordination messages.
-
-Example coordination flow:
 ```
-[10:30] swift-fox: Starting work on auth module. Will touch src/auth/*.ts
-[10:31] keen-owl: Noted. I'll work on the API tests instead.
-[10:45] swift-fox: Auth done. @keen-owl you can proceed with auth tests.
+magnus/
+├── magnus.el              # Entry point, customization
+├── magnus-instances.el    # Instance data structure and registry
+├── magnus-persistence.el  # Save/restore state across sessions
+├── magnus-process.el      # vterm process management
+├── magnus-status.el       # Status buffer UI
+├── magnus-transient.el    # Transient popup menus
+├── magnus-context.el      # Shared context buffer + URL fetching
+├── magnus-coord.el        # Agent coordination protocol
+└── magnus-attention.el    # Permission request queue
 ```
 
-### Attention queue
+## License
 
-When multiple agents need user input (permissions, confirmations), they can compete for attention. Magnus solves this with an attention queue:
-
-- Magnus monitors vterm buffers for permission prompts
-- Agents also announce `[ATTENTION]` in the coordination log before requesting input
-- Instances needing input join a queue and are focused one at a time
-- Press `a` to move to the next instance in queue after handling the current one
-
-The status buffer shows how many instances need attention: `Instances: 3 [2 need attention]`
+MIT
