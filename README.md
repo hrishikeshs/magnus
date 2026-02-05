@@ -4,6 +4,17 @@ A magit-inspired interface for managing multiple Claude Code instances within Em
 
 Run multiple AI agents in parallel, let them communicate to avoid conflicts, and handle their permission requests one at a time.
 
+## Screenshots
+
+**Two agents working side by side:**
+![Multiple Claude instances](screenshots/multiple-claude-instances.png)
+
+**Agents coordinating via shared task list:**
+![Coordination in action](screenshots/diff-view.png)
+
+**Permission request with attention queue:**
+![User action needed](screenshots/user-action.png)
+
 ## Why Magnus?
 
 When working with Claude Code, you often want multiple agents working simultaneously:
