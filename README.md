@@ -19,6 +19,39 @@ Magnus is a magit-like interface built within Emacs for managing multiple Claude
 
 ## Installation
 
+### From MELPA (recommended)
+
+```elisp
+(use-package magnus
+  :ensure t)
+```
+
+Or `M-x package-install RET magnus RET`
+
+### From GitHub (Emacs 29+)
+
+```elisp
+(use-package magnus
+  :vc (:url "https://github.com/hrishikeshs/magnus" :branch "master"))
+```
+
+Or one-liner: `M-x package-vc-install RET https://github.com/hrishikeshs/magnus RET`
+
+### With straight.el
+
+```elisp
+(straight-use-package
+ '(magnus :type git :host github :repo "hrishikeshs/magnus"))
+```
+
+### With quelpa
+
+```elisp
+(quelpa '(magnus :fetcher github :repo "hrishikeshs/magnus"))
+```
+
+### Manual
+
 ```elisp
 (add-to-list 'load-path "/path/to/magnus")
 (require 'magnus)
