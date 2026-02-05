@@ -222,6 +222,12 @@ The instructions tell agents to:
 - Announce `[ATTENTION]` before requesting user input
 - Log when they finish so others can proceed
 
+### Automatic @mention Notifications
+
+When an agent writes `@swift-fox` in the coordination file, swift-fox automatically receives a notification with the message context. This enables real-time communication between agents without requiring them to poll the file.
+
+New instances also receive an onboarding message that introduces them to the Magnus environment, their agent name, and the coordination protocol.
+
 This is advisory coordination — agents are instructed to follow the protocol, and Claude is good at it.
 
 ## Customization
@@ -242,6 +248,9 @@ This is advisory coordination — agents are instructed to follow the protocol, 
 ;; Patterns that indicate an instance needs attention
 (setq magnus-attention-patterns
       '("\\[y/n\\]" "\\[Y/n\\]" "Allow\\?" "Proceed\\?"))
+
+;; Disable automatic @mention notifications (default: t)
+(setq magnus-coord-mention-notify nil)
 ```
 
 ## Architecture
