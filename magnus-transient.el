@@ -1,0 +1,114 @@
+;;; magnus-transient.el --- Transient menus for magnus -*- lexical-binding: t -*-
+
+;; Copyright (C) 2026 Hrishikesh S
+
+;;; Commentary:
+
+;; This module provides transient popup menus for magnus, inspired by
+;; magit's interface.
+
+;;; Code:
+
+(require 'transient)
+(require 'magnus-instances)
+(require 'magnus-process)
+(require 'magnus-status)
+
+(declare-function magnus-context "magnus-context")
+(declare-function magnus-context-export-for-agent "magnus-context")
+(declare-function magnus-context-copy-for-agent "magnus-context")
+(declare-function magnus-coord-open "magnus-coord")
+(declare-function magnus-coord-open-instructions "magnus-coord")
+
+;;; Main dispatch
+
+;;;###autoload (autoload 'magnus-dispatch "magnus-transient" nil t)
+(transient-define-prefix magnus-dispatch ()
+  "Magnus command dispatcher."
+  ["Instance Actions"
+   ("c" "Create instance" magnus-status-create)
+   ("k" "Kill instance" magnus-status-kill)
+   ("K" "Force kill instance" magnus-status-kill-force)
+   ("r" "Rename instance" magnus-status-rename)
+   ("R" "Restart instance" magnus-status-restart)]
+  ["Context (shared notes)"
+   ("x" "Open context buffer" magnus-context)
+   ("e" "Export to file" magnus-context-export-for-agent)
+   ("w" "Copy to clipboard" magnus-context-copy-for-agent)]
+  ["Coordination (agent communication)"
+   ("C" "Open coordination file" magnus-status-coordination)
+   ("I" "Open agent instructions" magnus-transient-open-instructions)]
+  ["Navigation"
+   ("RET" "Visit instance" magnus-status-visit)
+   ("n" "Next instance" magnus-status-next)
+   ("p" "Previous instance" magnus-status-previous)]
+  ["Buffer"
+   ("g" "Refresh" magnus-status-refresh)
+   ("q" "Quit" quit-window)])
+
+;;; Create instance menu
+
+(transient-define-prefix magnus-create-dispatch ()
+  "Create a new Claude Code instance."
+  ["Create Instance"
+   ("c" "In current directory" magnus-create-current-dir)
+   ("d" "Choose directory" magnus-create-choose-dir)
+   ("p" "In project root" magnus-create-project-root)])
+
+(defun magnus-create-current-dir ()
+  "Create instance in current directory."
+  (interactive)
+  (magnus-process-create default-directory)
+  (magnus-status-refresh))
+
+(defun magnus-create-choose-dir ()
+  "Create instance in a chosen directory."
+  (interactive)
+  (call-interactively #'magnus-process-create)
+  (magnus-status-refresh))
+
+(defun magnus-create-project-root ()
+  "Create instance in the current project root."
+  (interactive)
+  (let ((root (magnus--project-root)))
+    (if root
+        (progn
+          (magnus-process-create root)
+          (magnus-status-refresh))
+      (user-error "Not in a project"))))
+
+(defun magnus--project-root ()
+  "Get the current project root."
+  (when (fboundp 'project-current)
+    (when-let ((project (project-current)))
+      (if (fboundp 'project-root)
+          (project-root project)
+        (car (project-roots project))))))
+
+;;; Instance actions
+
+(transient-define-prefix magnus-instance-dispatch ()
+  "Actions for the instance at point."
+  ["Instance"
+   :description magnus-transient--instance-description
+   ("RET" "Visit" magnus-status-visit)
+   ("k" "Kill" magnus-status-kill)
+   ("K" "Force kill" magnus-status-kill-force)
+   ("r" "Rename" magnus-status-rename)
+   ("R" "Restart" magnus-status-restart)])
+
+(defun magnus-transient--instance-description ()
+  "Return description for current instance."
+  (if-let ((instance (magnus-status--get-instance-at-point)))
+      (format "Instance: %s" (magnus-instance-name instance))
+    "No instance at point"))
+
+(defun magnus-transient-open-instructions ()
+  "Open the agent instructions file."
+  (interactive)
+  (if-let ((instance (car (magnus-instances-list))))
+      (magnus-coord-open-instructions (magnus-instance-directory instance))
+    (user-error "No instances to get project directory from")))
+
+(provide 'magnus-transient)
+;;; magnus-transient.el ends here
