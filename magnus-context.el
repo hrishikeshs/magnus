@@ -18,7 +18,6 @@
 
 (require 'url)
 (require 'url-http)
-(require 'dom)
 
 ;;; Customization
 
@@ -69,16 +68,15 @@ Default is 1 hour."
     map)
   "Keymap for `magnus-context-mode'.")
 
-(define-derived-mode magnus-context-mode markdown-mode "Magnus-Context"
-  "Major mode for magnus context buffers.
+(if (fboundp 'markdown-mode)
+    (define-derived-mode magnus-context-mode markdown-mode "Magnus-Context"
+      "Major mode for magnus context buffers.
 
 \\{magnus-context-mode-map}"
-  :group 'magnus
-  (setq-local auto-save-visited-mode t)
-  (add-hook 'after-change-functions #'magnus-context--schedule-save nil t))
-
-;; Fallback if markdown-mode not available
-(unless (fboundp 'markdown-mode)
+      :group 'magnus
+      (setq-local auto-save-visited-mode t)
+      (add-hook 'after-change-functions #'magnus-context--schedule-save nil t))
+  ;; Fallback if markdown-mode not available
   (define-derived-mode magnus-context-mode text-mode "Magnus-Context"
     "Major mode for magnus context buffers (text fallback)."
     :group 'magnus

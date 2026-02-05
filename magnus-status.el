@@ -65,8 +65,6 @@
     (define-key map (kbd "C") #'magnus-status-coordination)
     (define-key map (kbd "n") #'magnus-status-next)
     (define-key map (kbd "p") #'magnus-status-previous)
-    (define-key map (kbd "j") #'magnus-status-next)
-    (define-key map (kbd "k") #'magnus-status-previous)
     (define-key map (kbd "?") #'magnus-dispatch)
     (define-key map (kbd "q") #'quit-window)
     map)
