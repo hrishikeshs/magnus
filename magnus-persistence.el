@@ -1,6 +1,8 @@
 ;;; magnus-persistence.el --- State persistence for magnus -*- lexical-binding: t -*-
 
 ;; Copyright (C) 2026 Hrishikesh S
+;; Author: Hrishikesh S <hrishikeshsathyian@gmail.com>
+;; SPDX-License-Identifier: MIT
 
 ;;; Commentary:
 
