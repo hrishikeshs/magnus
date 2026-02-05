@@ -157,6 +157,46 @@ Or in your config:
 | `?`   | Show transient help menu   |
 | `q`   | Quit                       |
 
+### Transient Menu (`?`)
+
+Press `?` in the status buffer to see all commands organized by category:
+
+**Instance Actions**
+| Key | Action              |
+|-----|---------------------|
+| `c` | Create instance     |
+| `k` | Kill instance       |
+| `K` | Force kill instance |
+| `r` | Rename instance     |
+| `R` | Restart instance    |
+
+**Context (shared notes)**
+| Key | Action                    |
+|-----|---------------------------|
+| `x` | Open context buffer       |
+| `e` | Export to file in project |
+| `w` | Copy to clipboard         |
+
+**Coordination (agent communication)**
+| Key | Action                   |
+|-----|--------------------------|
+| `C` | Open coordination file   |
+| `I` | Open agent instructions  |
+
+**Attention (permission requests)**
+| Key | Action                      |
+|-----|-----------------------------|
+| `a` | Next in attention queue     |
+| `A` | Show attention queue        |
+| `t` | Toggle attention monitoring |
+
+**Navigation**
+| Key   | Action          |
+|-------|-----------------|
+| `RET` | Visit instance  |
+| `n`   | Next instance   |
+| `p`   | Previous instance |
+
 ### Context Buffer
 
 | Key       | Action                      |
