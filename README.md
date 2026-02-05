@@ -40,6 +40,8 @@ Run `M-x magnus` to open the status buffer.
 | `R`   | Restart instance          |
 | `x`   | Open context buffer       |
 | `C`   | Open coordination file    |
+| `a`   | Next in attention queue   |
+| `A`   | Show attention queue      |
 | `g`   | Refresh                   |
 | `?`   | Show help menu            |
 | `q`   | Quit                      |
@@ -78,3 +80,14 @@ Example coordination flow:
 [10:31] keen-owl: Noted. I'll work on the API tests instead.
 [10:45] swift-fox: Auth done. @keen-owl you can proceed with auth tests.
 ```
+
+### Attention queue
+
+When multiple agents need user input (permissions, confirmations), they can compete for attention. Magnus solves this with an attention queue:
+
+- Magnus monitors vterm buffers for permission prompts
+- Agents also announce `[ATTENTION]` in the coordination log before requesting input
+- Instances needing input join a queue and are focused one at a time
+- Press `a` to move to the next instance in queue after handling the current one
+
+The status buffer shows how many instances need attention: `Instances: 3 [2 need attention]`

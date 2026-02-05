@@ -40,6 +40,10 @@
   ["Coordination (agent communication)"
    ("C" "Open coordination file" magnus-status-coordination)
    ("I" "Open agent instructions" magnus-transient-open-instructions)]
+  ["Attention (permission requests)"
+   ("a" "Next in attention queue" magnus-attention-next)
+   ("A" "Show attention queue" magnus-attention-show-queue)
+   ("t" "Toggle attention monitoring" magnus-attention-toggle)]
   ["Navigation"
    ("RET" "Visit instance" magnus-status-visit)
    ("n" "Next instance" magnus-status-next)

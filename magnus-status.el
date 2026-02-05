@@ -14,6 +14,7 @@
 (require 'magnus-instances)
 (require 'magnus-process)
 (require 'magnus-coord)
+(require 'magnus-attention)
 
 (declare-function magnus-dispatch "magnus-transient")
 (declare-function magnus-context "magnus-context")
@@ -65,6 +66,8 @@
     (define-key map (kbd "C") #'magnus-status-coordination)
     (define-key map (kbd "n") #'magnus-status-next)
     (define-key map (kbd "p") #'magnus-status-previous)
+    (define-key map (kbd "a") #'magnus-attention-next)
+    (define-key map (kbd "A") #'magnus-attention-show-queue)
     (define-key map (kbd "?") #'magnus-dispatch)
     (define-key map (kbd "q") #'quit-window)
     map)
@@ -122,8 +125,12 @@
   "Insert the status buffer header."
   (insert (propertize "Magnus" 'face 'magnus-section-heading))
   (insert " - Claude Code Instance Manager\n")
-  (insert (format "Instances: %d\n" (magnus-instances-count)))
-  (insert "\n"))
+  (insert (format "Instances: %d" (magnus-instances-count)))
+  (let ((attention-count (magnus-attention-pending-count)))
+    (when (> attention-count 0)
+      (insert (propertize (format "  [%d need attention]" attention-count)
+                         'face 'magnus-status-running))))
+  (insert "\n\n"))
 
 (defun magnus-status--insert-instances ()
   "Insert the list of instances."

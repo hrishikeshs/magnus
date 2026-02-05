@@ -118,6 +118,16 @@ If you need a file another agent is using:
 2. Wait for their response before proceeding
 3. If urgent, explain why in your message
 
+## Requesting User Attention
+
+When you need user input (permissions, confirmations, etc.):
+1. BEFORE asking, announce in the Log: `[HH:MM] your-name: [ATTENTION] Need user input for <reason>`
+2. Wait briefly for other agents to finish their current attention requests
+3. Other agents should pause requests when they see another agent waiting
+4. After receiving input, log: `[HH:MM] your-name: [ATTENTION] Done, input received`
+
+This prevents multiple agents from asking for input simultaneously.
+
 ## Important Files
 
 - Coordination: `%s`

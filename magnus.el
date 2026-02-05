@@ -124,7 +124,9 @@ DIRECTORY is ignored but accepted for API consistency."
     (require 'magnus-transient)
     (require 'magnus-context)
     (require 'magnus-coord)
+    (require 'magnus-attention)
     (magnus-persistence-load)
+    (magnus-attention-start)
     (setq magnus--initialized t)))
 
 ;;;###autoload
