@@ -68,7 +68,28 @@ NAME is the instance name.  If nil, auto-generates one."
         (vterm-send-return))
       ;; Set up process sentinel
       (magnus-process--setup-sentinel instance buffer)
+      ;; Send onboarding message after Claude starts
+      (run-with-timer 3 nil #'magnus-process--send-onboarding instance)
       buffer)))
+
+(defun magnus-process--send-onboarding (instance)
+  "Send onboarding message to INSTANCE."
+  (when-let ((buffer (magnus-instance-buffer instance)))
+    (when (buffer-live-p buffer)
+      (let ((name (magnus-instance-name instance))
+            (msg (magnus-process--onboarding-message instance)))
+        (with-current-buffer buffer
+          (vterm-send-string msg)
+          (vterm-send-return))))))
+
+(defun magnus-process--onboarding-message (instance)
+  "Generate onboarding message for INSTANCE."
+  (let ((name (magnus-instance-name instance)))
+    (format "You are agent '%s', managed by Magnus (https://github.com/hrishikeshs/magnus). \
+Read .claude/magnus-instructions.md for the coordination protocol. \
+Check .magnus-coord.md before starting work - other agents may be active. \
+Announce your work area and files you'll touch."
+            name)))
 
 (defun magnus-process--create-vterm-buffer (buffer-name)
   "Create a vterm buffer with BUFFER-NAME."
