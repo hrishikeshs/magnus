@@ -147,6 +147,35 @@ If FORCE is non-nil, forcefully terminate."
    (lambda ()
      (magnus-process--spawn instance))))
 
+(defun magnus-process-suspend (instance)
+  "Suspend the Claude Code process for INSTANCE.
+Sends SIGTSTP to pause the process.  Use `magnus-process-resume' to continue."
+  (when-let ((buffer (magnus-instance-buffer instance)))
+    (when (buffer-live-p buffer)
+      (when-let ((process (get-buffer-process buffer)))
+        (when (process-live-p process)
+          (signal-process process 'SIGTSTP)
+          (magnus-instances-update instance :status 'suspended)
+          (when (get-buffer magnus-buffer-name)
+            (magnus-status-refresh))
+          (message "Suspended %s" (magnus-instance-name instance)))))))
+
+(defun magnus-process-resume (instance)
+  "Resume a suspended Claude Code process for INSTANCE.
+Sends SIGCONT to continue the process."
+  (when-let ((buffer (magnus-instance-buffer instance)))
+    (when (buffer-live-p buffer)
+      (when-let ((process (get-buffer-process buffer)))
+        (signal-process process 'SIGCONT)
+        (magnus-instances-update instance :status 'running)
+        (when (get-buffer magnus-buffer-name)
+          (magnus-status-refresh))
+        (message "Resumed %s" (magnus-instance-name instance))))))
+
+(defun magnus-process-suspended-p (instance)
+  "Return non-nil if INSTANCE is suspended."
+  (eq (magnus-instance-status instance) 'suspended))
+
 ;;; Instance interaction
 
 (defun magnus-process-switch-to (instance)

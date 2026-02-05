@@ -32,7 +32,9 @@
    ("k" "Kill instance" magnus-status-kill)
    ("K" "Force kill instance" magnus-status-kill-force)
    ("r" "Rename instance" magnus-status-rename)
-   ("R" "Restart instance" magnus-status-restart)]
+   ("R" "Restart instance" magnus-status-restart)
+   ("s" "Suspend instance" magnus-status-suspend)
+   ("S" "Resume instance" magnus-status-resume)]
   ["Context (shared notes)"
    ("x" "Open context buffer" magnus-context)
    ("e" "Export to file" magnus-context-export-for-agent)
@@ -101,7 +103,9 @@
    ("k" "Kill" magnus-status-kill)
    ("K" "Force kill" magnus-status-kill-force)
    ("r" "Rename" magnus-status-rename)
-   ("R" "Restart" magnus-status-restart)])
+   ("R" "Restart" magnus-status-restart)
+   ("s" "Suspend" magnus-status-suspend)
+   ("S" "Resume" magnus-status-resume)])
 
 (defun magnus-transient--instance-description ()
   "Return description for current instance."

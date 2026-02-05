@@ -41,6 +41,11 @@
   "Face for stopped status."
   :group 'magnus)
 
+(defface magnus-status-suspended
+  '((t :inherit warning))
+  "Face for suspended status."
+  :group 'magnus)
+
 (defface magnus-section-heading
   '((t :inherit font-lock-keyword-face :weight bold))
   "Face for section headings."
@@ -61,6 +66,8 @@
     (define-key map (kbd "K") #'magnus-status-kill-force)
     (define-key map (kbd "r") #'magnus-status-rename)
     (define-key map (kbd "R") #'magnus-status-restart)
+    (define-key map (kbd "s") #'magnus-status-suspend)
+    (define-key map (kbd "S") #'magnus-status-resume)
     (define-key map (kbd "g") #'magnus-status-refresh)
     (define-key map (kbd "x") #'magnus-status-context)
     (define-key map (kbd "C") #'magnus-status-coordination)
@@ -152,9 +159,14 @@
   (let* ((name (magnus-instance-name instance))
          (directory (magnus-instance-directory instance))
          (status (magnus-instance-status instance))
+         (suspended (magnus-process-suspended-p instance))
          (running (magnus-process-running-p instance))
-         (status-str (if running "running" "stopped"))
-         (status-face (if running 'magnus-status-running 'magnus-status-stopped))
+         (status-str (cond (suspended "suspended")
+                           (running "running")
+                           (t "stopped")))
+         (status-face (cond (suspended 'magnus-status-suspended)
+                            (running 'magnus-status-running)
+                            (t 'magnus-status-stopped)))
          (age (magnus-status--format-age (magnus-instance-created-at instance))))
     (insert "  ")
     (insert (propertize name 'face 'magnus-instance-name))
@@ -358,6 +370,29 @@
     (if-let ((first-instance (car (magnus-instances-list))))
         (magnus-coord-open (magnus-instance-directory first-instance))
       (user-error "No instances to get project directory from"))))
+
+(defun magnus-status-suspend ()
+  "Suspend the instance at point."
+  (interactive)
+  (if-let ((instance (magnus-status--get-instance-at-point)))
+      (if (magnus-process-suspended-p instance)
+          (user-error "Instance '%s' is already suspended"
+                     (magnus-instance-name instance))
+        (magnus-process-suspend instance)
+        (magnus-status-refresh))
+    (user-error "No instance at point")))
+
+(defun magnus-status-resume ()
+  "Resume the instance at point."
+  (interactive)
+  (if-let ((instance (magnus-status--get-instance-at-point)))
+      (if (magnus-process-suspended-p instance)
+          (progn
+            (magnus-process-resume instance)
+            (magnus-status-refresh))
+        (user-error "Instance '%s' is not suspended"
+                   (magnus-instance-name instance)))
+    (user-error "No instance at point")))
 
 (provide 'magnus-status)
 ;;; magnus-status.el ends here

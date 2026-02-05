@@ -148,6 +148,8 @@ Or in your config:
 | `K`   | Force kill instance        |
 | `r`   | Rename instance            |
 | `R`   | Restart instance           |
+| `s`   | Suspend instance           |
+| `S`   | Resume instance            |
 | `x`   | Open context buffer        |
 | `C`   | Open coordination file     |
 | `a`   | Next in attention queue    |
@@ -169,6 +171,8 @@ Press `?` in the status buffer to see all commands organized by category:
 | `K` | Force kill instance |
 | `r` | Rename instance     |
 | `R` | Restart instance    |
+| `s` | Suspend instance    |
+| `S` | Resume instance     |
 
 **Context (shared notes)**
 | Key | Action                    |
