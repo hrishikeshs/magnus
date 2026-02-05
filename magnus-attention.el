@@ -11,20 +11,16 @@
 ;; it joins an attention queue.  Magnus focuses instances one at a time,
 ;; preventing multiple instances from competing for attention.
 ;;
-;; Detection methods:
-;; 1. Pattern matching in vterm buffers for permission prompts
-;; 2. Coordination file status (agents announce awaiting-input)
-;;
+;; Detection: Pattern matching in vterm buffers for permission prompts.
 ;; The attention queue ensures orderly handling of requests.
 
 ;;; Code:
 
 (require 'magnus-instances)
-(require 'magnus-coord)
 
 ;;; Customization
 
-(defcustom magnus-attention-check-interval 2
+(defcustom magnus-attention-check-interval 5
   "Seconds between checks for instances needing attention."
   :type 'number
   :group 'magnus)
@@ -72,6 +68,9 @@ First element is the instance currently having the floor.")
 (defvar magnus-attention--last-notify nil
   "Last notification time to avoid spam.")
 
+(defvar magnus-attention--checking nil
+  "Non-nil if currently checking instances (prevents re-entry).")
+
 ;;; Queue management
 
 (defun magnus-attention-request (instance)
@@ -79,13 +78,10 @@ First element is the instance currently having the floor.")
   (let ((id (magnus-instance-id instance)))
     (unless (member id magnus-attention-queue)
       (setq magnus-attention-queue (append magnus-attention-queue (list id)))
-      (magnus-attention--log instance "needs attention")
       (when (and magnus-attention-notify
                  (= (length magnus-attention-queue) 1))
         ;; First in queue, notify immediately
-        (magnus-attention--notify instance))
-      ;; Update coordination file
-      (magnus-attention--update-coord instance 'awaiting-input))))
+        (magnus-attention--notify instance)))))
 
 (defun magnus-attention-release (instance)
   "Release INSTANCE from the attention queue."
@@ -93,8 +89,6 @@ First element is the instance currently having the floor.")
     (setq magnus-attention-queue (delete id magnus-attention-queue))
     (when (string= magnus-attention-current id)
       (setq magnus-attention-current nil)
-      ;; Update coordination file
-      (magnus-attention--update-coord instance 'ready)
       ;; Focus next in queue if any
       (magnus-attention--focus-next))))
 
@@ -126,57 +120,36 @@ First element is the instance currently having the floor.")
 
 (defun magnus-attention-check-all ()
   "Check all instances for attention needs."
-  (dolist (instance (magnus-instances-list))
-    (when (magnus-attention--needs-input-p instance)
-      (magnus-attention-request instance))))
+  ;; Prevent re-entry and protect against errors
+  (unless magnus-attention--checking
+    (setq magnus-attention--checking t)
+    (unwind-protect
+        (condition-case nil
+            (dolist (instance (magnus-instances-list))
+              (when (magnus-attention--needs-input-p instance)
+                (magnus-attention-request instance)))
+          (error nil))  ; Silently ignore errors
+      (setq magnus-attention--checking nil))))
 
 (defun magnus-attention--needs-input-p (instance)
   "Check if INSTANCE appears to need user input."
-  (let ((buffer (magnus-instance-buffer instance)))
-    (when (and buffer (buffer-live-p buffer))
-      (with-current-buffer buffer
-        (magnus-attention--buffer-has-prompt-p)))))
+  (condition-case nil
+      (let ((buffer (magnus-instance-buffer instance)))
+        (when (and buffer (buffer-live-p buffer))
+          (with-current-buffer buffer
+            (magnus-attention--buffer-has-prompt-p))))
+    (error nil)))
 
 (defun magnus-attention--buffer-has-prompt-p ()
   "Check if current buffer has a prompt waiting for input."
-  (save-excursion
-    (goto-char (point-max))
-    (let ((search-start (save-excursion
-                          (forward-line (- magnus-attention-scan-lines))
-                          (point)))
-          (found nil))
-      (while (and (not found)
-                  (re-search-backward
-                   (regexp-opt magnus-attention-patterns)
-                   search-start t))
-        (setq found t))
-      found)))
-
-(defun magnus-attention--is-prompt-line-p (line)
-  "Check if LINE contains a prompt pattern."
-  (let ((case-fold-search t))
+  ;; Only check last few lines - fast string match, no regex search
+  (let* ((end (point-max))
+         (start (max (point-min) (- end 500)))  ; Last 500 chars only
+         (text (buffer-substring-no-properties start end)))
     (cl-some (lambda (pattern)
-               (string-match-p pattern line))
+               (string-match-p pattern text))
              magnus-attention-patterns)))
 
-;;; Coordination integration
-
-(defun magnus-attention--update-coord (instance status)
-  "Update INSTANCE's status in coordination file.
-STATUS is either `awaiting-input' or `ready'."
-  (let* ((directory (magnus-instance-directory instance))
-         (name (magnus-instance-name instance))
-         (status-str (if (eq status 'awaiting-input)
-                         "awaiting-input"
-                       "ready")))
-    (magnus-coord-update-active directory name "attention" status-str "")))
-
-(defun magnus-attention--log (instance message)
-  "Log MESSAGE for INSTANCE in coordination file."
-  (let ((directory (magnus-instance-directory instance))
-        (name (magnus-instance-name instance)))
-    (magnus-coord-add-log directory name
-                          (format "[ATTENTION] %s" message))))
 
 ;;; Notifications
 
