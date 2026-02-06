@@ -142,8 +142,15 @@ SESSIONS-BEFORE is the list of sessions that existed before spawning."
   "Create a vterm buffer with BUFFER-NAME."
   (let ((buffer (generate-new-buffer buffer-name)))
     (with-current-buffer buffer
-      (vterm-mode))
+      (vterm-mode)
+      (magnus-process--setup-keys))
     buffer))
+
+(defun magnus-process--setup-keys ()
+  "Set up keybindings for Claude Code in the current vterm buffer.
+Maps C-g to send ESC to Claude, since Emacs intercepts the real ESC key."
+  (local-set-key (kbd "C-g")
+                 (lambda () (interactive) (vterm-send-key "<escape>"))))
 
 (defun magnus-process--setup-sentinel (instance buffer)
   "Set up process monitoring for INSTANCE in BUFFER."

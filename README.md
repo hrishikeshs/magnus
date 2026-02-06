@@ -238,15 +238,9 @@ This is advisory coordination — agents are instructed to follow the protocol, 
 
 ## Tips
 
-### ESC key in vterm
+### ESC key in Claude buffers
 
-Emacs intercepts `ESC` as a Meta prefix, so it never reaches Claude Code. Add this to your config to make `ESC` work inside vterm buffers (`Alt` still works as Meta):
-
-```elisp
-(with-eval-after-load 'vterm
-  (define-key vterm-mode-map (kbd "<escape>")
-    (lambda () (interactive) (vterm-send-key "<escape>"))))
-```
+Emacs intercepts `ESC` as a Meta prefix, so it never reaches Claude Code. Magnus automatically maps `C-g` to send ESC to Claude in all instance buffers. Use `C-g` wherever Claude expects you to press Escape (cancel, go back, dismiss).
 
 ### Helm / Projectile users
 
