@@ -18,6 +18,9 @@
 
 (require 'magnus-instances)
 
+(declare-function vterm-send-string "vterm")
+(declare-function vterm-send-return "vterm")
+
 ;;; Customization
 
 (defcustom magnus-attention-check-interval 10
@@ -46,6 +49,44 @@ These are matched against the last few lines of the vterm buffer."
 (defcustom magnus-attention-scan-lines 10
   "Number of lines from end of buffer to scan for attention patterns."
   :type 'integer
+  :group 'magnus)
+
+(defcustom magnus-attention-auto-approve-patterns
+  '("Read"
+    "Glob"
+    "Grep"
+    "Edit"
+    "Write"
+    "NotebookEdit"
+    "Bash(git "
+    "Bash(cd "
+    "Bash(ls "
+    "Bash(mkdir "
+    "Bash(cat "
+    "Bash(head "
+    "Bash(tail "
+    "Bash(wc "
+    "Bash(find "
+    "Bash(grep "
+    "Bash(rg "
+    "Bash(npm test"
+    "Bash(npm run"
+    "Bash(npx "
+    "Bash(cargo test"
+    "Bash(cargo build"
+    "Bash(cargo check"
+    "Bash(make"
+    "Bash(python "
+    "Bash(pytest"
+    "Bash(go test"
+    "Bash(go build"
+    "Bash(emacs --batch")
+  "Patterns for permission prompts that should be auto-approved.
+When the last line of a vterm buffer matches one of these (as a
+substring of the prompt text), magnus sends `y' automatically
+instead of adding the instance to the attention queue.
+Set to nil to disable auto-approval."
+  :type '(repeat string)
   :group 'magnus)
 
 (defcustom magnus-attention-notify t
@@ -119,7 +160,8 @@ First element is the instance currently having the floor.")
 ;;; Detection
 
 (defun magnus-attention-check-all ()
-  "Check all instances for attention needs."
+  "Check all instances for attention needs.
+Tries auto-approval first; falls back to the attention queue."
   ;; Prevent re-entry and protect against errors
   (unless magnus-attention--checking
     (setq magnus-attention--checking t)
@@ -127,7 +169,8 @@ First element is the instance currently having the floor.")
         (condition-case nil
             (dolist (instance (magnus-instances-list))
               (when (magnus-attention--needs-input-p instance)
-                (magnus-attention-request instance)))
+                (unless (magnus-attention--try-auto-approve instance)
+                  (magnus-attention-request instance))))
           (error nil))  ; Silently ignore errors
       (setq magnus-attention--checking nil))))
 
@@ -150,6 +193,39 @@ First element is the instance currently having the floor.")
                (string-match-p pattern text))
              magnus-attention-patterns)))
 
+
+;;; Auto-approval
+
+(defun magnus-attention--try-auto-approve (instance)
+  "Try to auto-approve INSTANCE's permission prompt.
+Returns non-nil if the prompt was auto-approved."
+  (when magnus-attention-auto-approve-patterns
+    (when-let ((buffer (magnus-instance-buffer instance)))
+      (when (buffer-live-p buffer)
+        (let ((prompt-text (magnus-attention--extract-prompt-text buffer)))
+          (when (and prompt-text
+                     (magnus-attention--matches-auto-approve-p prompt-text))
+            (with-current-buffer buffer
+              (vterm-send-string "y")
+              (vterm-send-return))
+            (message "Magnus: auto-approved for %s" (magnus-instance-name instance))
+            t))))))
+
+(defun magnus-attention--extract-prompt-text (buffer)
+  "Extract the permission prompt text from BUFFER.
+Returns the last non-empty line, which is typically the prompt."
+  (with-current-buffer buffer
+    (let* ((end (point-max))
+           (start (max (point-min) (- end 500)))
+           (text (buffer-substring-no-properties start end))
+           (lines (split-string text "\n" t "[ \t]+")))
+      (car (last lines)))))
+
+(defun magnus-attention--matches-auto-approve-p (prompt-text)
+  "Return non-nil if PROMPT-TEXT matches an auto-approve pattern."
+  (cl-some (lambda (pattern)
+             (string-match-p (regexp-quote pattern) prompt-text))
+           magnus-attention-auto-approve-patterns))
 
 ;;; Notifications
 
