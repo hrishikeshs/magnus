@@ -37,7 +37,8 @@
    ("S" "Resume instance" magnus-status-resume)
    ("d" "Change directory" magnus-status-chdir)
    ("m" "Send message" magnus-status-send-message)
-   ("t" "Thinking trace" magnus-status-trace)]
+   ("t" "Thinking trace" magnus-status-trace)
+   ("P" "Purge all instances" magnus-status-purge)]
   ["Context (shared notes)"
    ("x" "Open context buffer" magnus-context)
    ("e" "Export to file" magnus-context-export-for-agent)

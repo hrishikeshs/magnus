@@ -82,6 +82,7 @@
     (define-key map (kbd "p") #'magnus-status-previous)
     (define-key map (kbd "a") #'magnus-attention-next)
     (define-key map (kbd "A") #'magnus-attention-show-queue)
+    (define-key map (kbd "P") #'magnus-status-purge)
     (define-key map (kbd "?") #'magnus-dispatch)
     (define-key map (kbd "q") #'quit-window)
     map)
@@ -437,6 +438,19 @@ directory, or `magnus-default-directory', or `default-directory'."
         (magnus-process-chdir instance new-dir)
         (magnus-status-refresh))
     (user-error "No instance at point")))
+
+(defun magnus-status-purge ()
+  "Kill and remove all instances."
+  (interactive)
+  (let ((count (magnus-instances-count)))
+    (if (zerop count)
+        (user-error "No instances to purge")
+      (when (yes-or-no-p (format "Kill and remove all %d instance%s? "
+                                 count (if (= count 1) "" "s")))
+        (dolist (instance (copy-sequence (magnus-instances-list)))
+          (magnus-process-kill-and-remove instance t))
+        (magnus-status-refresh)
+        (message "Purged %d instance%s" count (if (= count 1) "" "s"))))))
 
 (provide 'magnus-status)
 ;;; magnus-status.el ends here
