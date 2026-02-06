@@ -414,6 +414,41 @@ FILES is a list of files they're touching."
   "Remove AGENT from the Active Work table in DIRECTORY."
   (magnus-coord-update-active directory agent "" "done" ""))
 
+(defun magnus-coord-reconcile (directory)
+  "Reconcile the Active Work table in DIRECTORY with live instances.
+Removes entries for agents not in the Magnus registry, and entries
+with stale statuses like done, died, finished, completed, stopped."
+  (let* ((file (magnus-coord-file-path directory))
+         (live-names (mapcar #'magnus-instance-name
+                             (cl-remove-if-not
+                              (lambda (inst)
+                                (string= (magnus-instance-directory inst) directory))
+                              (magnus-instances-list)))))
+    (when (file-exists-p file)
+      (with-temp-buffer
+        (insert-file-contents file)
+        (goto-char (point-min))
+        (when (re-search-forward "^## Active Work" nil t)
+          (when (re-search-forward "^|[-|]+" nil t)
+            (forward-line 1)
+            (while (looking-at "^| *\\([^|]+\\) *| *\\([^|]+\\) *| *\\([^|]+\\) *|")
+              (let ((agent (string-trim (match-string 1)))
+                    (status (string-trim (match-string 3))))
+                (if (or (not (member agent live-names))
+                        (string-match-p "done\\|died\\|finished\\|completed\\|stopped"
+                                        status))
+                    (delete-region (line-beginning-position)
+                                  (min (1+ (line-end-position)) (point-max)))
+                  (forward-line 1))))))
+        (write-region (point-min) (point-max) file nil 'quiet)))))
+
+(defun magnus-coord-reconcile-all ()
+  "Reconcile coordination files for all project directories."
+  (let ((dirs (delete-dups
+               (mapcar #'magnus-instance-directory (magnus-instances-list)))))
+    (dolist (dir dirs)
+      (magnus-coord-reconcile dir))))
+
 ;;; Agent registration
 
 (defun magnus-coord-register-agent (directory instance)

@@ -103,8 +103,11 @@
     (switch-to-buffer buffer)))
 
 (defun magnus-status-refresh ()
-  "Refresh the magnus status buffer."
+  "Refresh the magnus status buffer.
+Also reconciles coordination files, removing stale entries."
   (interactive)
+  ;; Reconcile coord files before redrawing
+  (magnus-coord-reconcile-all)
   (when-let ((buffer (get-buffer magnus-buffer-name)))
     (with-current-buffer buffer
       (let ((inhibit-read-only t)
