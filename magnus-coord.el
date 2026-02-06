@@ -35,6 +35,52 @@
   :type 'boolean
   :group 'magnus)
 
+(defcustom magnus-coord-reminder-interval 600
+  "Seconds between coordination file reminders to agents.
+Set to nil to disable.  Default is 600 (10 minutes)."
+  :type '(choice (integer :tag "Seconds")
+                 (const :tag "Disabled" nil))
+  :group 'magnus)
+
+;;; Sending messages to agents
+
+(defun magnus-coord-send-message (instance message)
+  "Send MESSAGE to INSTANCE's vterm buffer as user input."
+  (when-let ((buffer (magnus-instance-buffer instance)))
+    (when (buffer-live-p buffer)
+      (with-current-buffer buffer
+        (vterm-send-string message)
+        (vterm-send-return)))))
+
+;;; Periodic reminders
+
+(defvar magnus-coord--reminder-timer nil
+  "Timer for periodic coordination reminders.")
+
+(defun magnus-coord-start-reminders ()
+  "Start periodic coordination reminders."
+  (magnus-coord-stop-reminders)
+  (when magnus-coord-reminder-interval
+    (setq magnus-coord--reminder-timer
+          (run-with-timer magnus-coord-reminder-interval
+                         magnus-coord-reminder-interval
+                         #'magnus-coord--send-reminders))))
+
+(defun magnus-coord-stop-reminders ()
+  "Stop periodic coordination reminders."
+  (when magnus-coord--reminder-timer
+    (cancel-timer magnus-coord--reminder-timer)
+    (setq magnus-coord--reminder-timer nil)))
+
+(defun magnus-coord--send-reminders ()
+  "Send a coordination reminder to all running instances."
+  (dolist (instance (magnus-instances-list))
+    (when (eq (magnus-instance-status instance) 'running)
+      (magnus-coord-send-message
+       instance
+       (format "Reminder: you are '%s'. Check .magnus-coord.md for messages from other agents and update your status there."
+               (magnus-instance-name instance))))))
+
 ;;; @mention watching
 
 (defvar magnus-coord--watchers nil
@@ -161,19 +207,14 @@ Returns (sender . message) or nil."
 (defun magnus-coord--send-mention-notification (instance context-line)
   "Send a mention notification to INSTANCE with CONTEXT-LINE.
 Formats the message as a direct user instruction so Claude acts on it."
-  (when-let ((buffer (magnus-instance-buffer instance)))
-    (when (buffer-live-p buffer)
-      (let* ((name (magnus-instance-name instance))
-             (parsed (magnus-coord--extract-sender-and-message context-line name))
-             (msg (if parsed
-                      (format "%s (another agent) says: %s — Do this now. Log your acknowledgment and progress in .magnus-coord.md"
-                              (car parsed) (cdr parsed))
-                    ;; Fallback if we can't parse the sender
-                    (format "Another agent mentioned you in .magnus-coord.md: \"%s\" — Read the file, do what's asked, and log your progress there."
-                            context-line))))
-        (with-current-buffer buffer
-          (vterm-send-string msg)
-          (vterm-send-return))))))
+  (let* ((name (magnus-instance-name instance))
+         (parsed (magnus-coord--extract-sender-and-message context-line name))
+         (msg (if parsed
+                  (format "%s (another agent) says: %s — Do this now. Log your acknowledgment and progress in .magnus-coord.md"
+                          (car parsed) (cdr parsed))
+                (format "Another agent mentioned you in .magnus-coord.md: \"%s\" — Read the file, do what's asked, and log your progress there."
+                        context-line))))
+    (magnus-coord-send-message instance msg)))
 
 ;;; Coordination file management
 

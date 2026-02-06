@@ -35,7 +35,8 @@
    ("R" "Restart instance" magnus-status-restart)
    ("s" "Suspend instance" magnus-status-suspend)
    ("S" "Resume instance" magnus-status-resume)
-   ("d" "Change directory" magnus-status-chdir)]
+   ("d" "Change directory" magnus-status-chdir)
+   ("m" "Send message" magnus-status-send-message)]
   ["Context (shared notes)"
    ("x" "Open context buffer" magnus-context)
    ("e" "Export to file" magnus-context-export-for-agent)
@@ -113,7 +114,8 @@ Avoids triggering interactive prompts from Projectile."
    ("R" "Restart" magnus-status-restart)
    ("s" "Suspend" magnus-status-suspend)
    ("S" "Resume" magnus-status-resume)
-   ("d" "Change directory" magnus-status-chdir)])
+   ("d" "Change directory" magnus-status-chdir)
+   ("m" "Send message" magnus-status-send-message)])
 
 (defun magnus-transient--instance-description ()
   "Return description for current instance."

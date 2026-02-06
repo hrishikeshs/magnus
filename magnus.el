@@ -127,6 +127,7 @@ DIRECTORY is ignored but accepted for API consistency."
     (require 'magnus-attention)
     (magnus-persistence-load)
     (magnus-attention-start)
+    (magnus-coord-start-reminders)
     (setq magnus--initialized t)))
 
 ;;;###autoload
