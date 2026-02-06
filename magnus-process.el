@@ -186,9 +186,11 @@ RESOURCES is a list of (descriptor poll-timer cleanup-timer) to clean up on succ
                (lambda (a b)
                  (time-less-p
                   (file-attribute-modification-time
-                   (file-attributes (expand-file-name b sessions-dir)))
+                   (file-attributes
+                    (expand-file-name (concat b ".jsonl") sessions-dir)))
                   (file-attribute-modification-time
-                   (file-attributes (expand-file-name a sessions-dir)))))))))
+                   (file-attributes
+                    (expand-file-name (concat a ".jsonl") sessions-dir)))))))))
 
 (defun magnus-process--create-vterm-buffer (buffer-name)
   "Create a vterm buffer with BUFFER-NAME."
@@ -276,8 +278,11 @@ Maps C-g to send ESC to Claude, since Emacs intercepts the real ESC key."
       ;; Try to detect session-id if missing
       (unless session-id
         (let ((sessions (magnus-process--list-sessions directory)))
-          (when (= 1 (length sessions))
-            (setq session-id (car sessions))
+          (when sessions
+            (setq session-id (if (= 1 (length sessions))
+                                 (car sessions)
+                               (magnus-process--most-recent-session
+                                directory sessions)))
             (magnus-instances-update instance :session-id session-id))))
       (let ((jsonl-file (when session-id
                           (magnus-process--session-jsonl-path directory session-id))))
