@@ -32,7 +32,7 @@ Magnus solves all of this.
 ## Features
 
 ### Instance Management
-Spawn, kill, rename, and switch between Claude Code instances running in vterm buffers. Each instance gets a randomly generated name (like `swift-fox` or `keen-owl`) and runs in its own terminal.
+Spawn, kill, suspend/resume, rename, and switch between Claude Code instances running in vterm buffers. Each instance gets a randomly generated name (like `swift-fox` or `keen-owl`) and runs in its own terminal. Change an instance's working directory with session resume — Claude keeps its full conversation history.
 
 ### Agent Coordination
 Agents communicate through a shared `.magnus-coord.md` file:
@@ -62,6 +62,14 @@ A per-project scratch buffer where you can paste notes, links, Confluence pages,
 - Paste URLs and magnus fetches + caches the content
 - Export to a file agents can read, or copy to clipboard
 - Persists across Emacs sessions (stored in `~/.emacs.d/magnus-context/`)
+
+### Thinking Trace
+Press `t` on any instance to open a trace buffer that reads the session JSONL file directly. See the full thinking/reasoning that's normally collapsed in Claude Code, plus user messages and responses — in a regular scrollable Emacs buffer.
+
+The trace auto-refreshes every 2 seconds so you can watch agents think in real-time.
+
+### Direct Messaging
+Press `m` to send a message directly to an agent from the status buffer. The message appears in the agent's terminal as if you typed it — Claude acts on it immediately. Agents also receive periodic reminders (every 10 min) to check the coordination file.
 
 ### Attention Queue
 When agents need user input (permission prompts, confirmations), they join a queue:
@@ -151,6 +159,8 @@ Or in your config:
 | `s`   | Suspend instance           |
 | `S`   | Resume instance            |
 | `d`   | Change directory           |
+| `m`   | Send message to agent      |
+| `t`   | Open thinking trace        |
 | `x`   | Open context buffer        |
 | `C`   | Open coordination file     |
 | `a`   | Next in attention queue    |
@@ -175,6 +185,8 @@ Press `?` in the status buffer to see all commands organized by category:
 | `s` | Suspend instance    |
 | `S` | Resume instance     |
 | `d` | Change directory    |
+| `m` | Send message        |
+| `t` | Thinking trace      |
 
 **Context (shared notes)**
 | Key | Action                    |
@@ -202,6 +214,14 @@ Press `?` in the status buffer to see all commands organized by category:
 | `RET` | Visit instance  |
 | `n`   | Next instance   |
 | `p`   | Previous instance |
+
+### Trace Buffer (`*trace:<name>*`)
+
+| Key | Action          |
+|-----|-----------------|
+| `g` | Refresh         |
+| `G` | Jump to end     |
+| `q` | Close           |
 
 ### Context Buffer
 
@@ -271,6 +291,10 @@ Magnus avoids triggering interactive Helm/Projectile prompts when creating insta
 
 ;; Disable automatic @mention notifications (default: t)
 (setq magnus-coord-mention-notify nil)
+
+;; Coordination reminder interval in seconds (default: 600 / 10 min)
+(setq magnus-coord-reminder-interval 300)  ;; 5 minutes
+(setq magnus-coord-reminder-interval nil)  ;; disable reminders
 ```
 
 ## Architecture
