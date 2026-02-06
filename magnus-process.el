@@ -152,6 +152,196 @@ Maps C-g to send ESC to Claude, since Emacs intercepts the real ESC key."
   (local-set-key (kbd "C-g")
                  (lambda () (interactive) (vterm-send-key "<escape>"))))
 
+;;; Trace buffers - JSONL session viewer
+
+(defface magnus-trace-user
+  '((t :inherit font-lock-keyword-face :weight bold))
+  "Face for user messages in trace buffer."
+  :group 'magnus)
+
+(defface magnus-trace-thinking
+  '((t :inherit font-lock-comment-face :slant italic))
+  "Face for thinking blocks in trace buffer."
+  :group 'magnus)
+
+(defface magnus-trace-assistant
+  '((t :inherit default))
+  "Face for assistant responses in trace buffer."
+  :group 'magnus)
+
+(defface magnus-trace-separator
+  '((t :inherit font-lock-comment-face))
+  "Face for separators in trace buffer."
+  :group 'magnus)
+
+(defvar-local magnus-trace--instance nil
+  "The instance this trace buffer is following.")
+
+(defvar-local magnus-trace--last-line-count 0
+  "Number of JSONL lines already processed.")
+
+(defvar magnus-trace--timer nil
+  "Timer for auto-refreshing trace buffers.")
+
+(define-derived-mode magnus-trace-mode special-mode "Trace"
+  "Major mode for viewing Claude Code thinking trace.
+\\{magnus-trace-mode-map}"
+  :group 'magnus
+  (setq-local truncate-lines nil)
+  (setq-local word-wrap t))
+
+(let ((map magnus-trace-mode-map))
+  (define-key map (kbd "g") #'magnus-trace-refresh)
+  (define-key map (kbd "G") #'magnus-trace-tail)
+  (define-key map (kbd "q") #'quit-window))
+
+(defun magnus-process-trace (instance)
+  "Open the trace buffer for INSTANCE showing thinking and messages."
+  (let* ((name (magnus-instance-name instance))
+         (trace-name (format "*trace:%s*" name))
+         (trace-buf (get-buffer-create trace-name)))
+    (with-current-buffer trace-buf
+      (unless (eq major-mode 'magnus-trace-mode)
+        (magnus-trace-mode))
+      (setq magnus-trace--instance instance)
+      (setq magnus-trace--last-line-count 0)
+      (let ((inhibit-read-only t))
+        (erase-buffer))
+      (magnus-trace-refresh))
+    (magnus-process--ensure-trace-timer)
+    (display-buffer trace-buf '(display-buffer-in-side-window
+                                (side . bottom)
+                                (window-height . 0.35)))
+    trace-buf))
+
+(defun magnus-trace-refresh ()
+  "Refresh the trace buffer with new JSONL content."
+  (interactive)
+  (when magnus-trace--instance
+    (let* ((instance magnus-trace--instance)
+           (session-id (magnus-instance-session-id instance))
+           (directory (magnus-instance-directory instance))
+           (jsonl-file (when session-id
+                         (magnus-process--session-jsonl-path directory session-id))))
+      (if (and jsonl-file (file-exists-p jsonl-file))
+          (magnus-trace--append-new-entries jsonl-file)
+        (let ((inhibit-read-only t))
+          (goto-char (point-max))
+          (unless (> (buffer-size) 0)
+            (insert (propertize "Waiting for session to start...\n"
+                               'face 'magnus-trace-separator))))))))
+
+(defun magnus-trace-tail ()
+  "Refresh and jump to the end of the trace buffer."
+  (interactive)
+  (magnus-trace-refresh)
+  (goto-char (point-max))
+  (recenter -3))
+
+(defun magnus-process--session-jsonl-path (directory session-id)
+  "Get the JSONL file path for SESSION-ID in DIRECTORY."
+  (let* ((project-hash (magnus-process--project-hash directory))
+         (session-dir (expand-file-name
+                       (concat "projects/" project-hash "/" session-id)
+                       (expand-file-name ".claude" (getenv "HOME")))))
+    ;; Find the .jsonl file in the session directory
+    (when (file-directory-p session-dir)
+      (car (directory-files session-dir t "\\.jsonl$")))))
+
+(defun magnus-trace--append-new-entries (jsonl-file)
+  "Append new entries from JSONL-FILE to the current trace buffer."
+  (let* ((all-lines (magnus-trace--read-lines jsonl-file))
+         (new-lines (nthcdr magnus-trace--last-line-count all-lines))
+         (at-end (>= (point) (point-max))))
+    (when new-lines
+      (let ((inhibit-read-only t))
+        (save-excursion
+          (goto-char (point-max))
+          (dolist (line new-lines)
+            (condition-case nil
+                (let ((entry (json-parse-string line :object-type 'alist)))
+                  (magnus-trace--render-entry entry))
+              (error nil)))))
+      (setq magnus-trace--last-line-count (length all-lines))
+      ;; Follow tail if user was at end
+      (when at-end
+        (goto-char (point-max))
+        (let ((win (get-buffer-window (current-buffer))))
+          (when win
+            (set-window-point win (point-max))))))))
+
+(defun magnus-trace--read-lines (file)
+  "Read all lines from FILE."
+  (with-temp-buffer
+    (insert-file-contents file)
+    (split-string (buffer-string) "\n" t)))
+
+(defun magnus-trace--render-entry (entry)
+  "Render a JSONL ENTRY into the trace buffer."
+  (let ((type (alist-get 'type entry))
+        (message (alist-get 'message entry))
+        (timestamp (alist-get 'timestamp entry)))
+    (cond
+     ((string= type "user")
+      (let ((content (alist-get 'content message)))
+        (when (and content (stringp content) (not (string-empty-p content)))
+          (insert (propertize (format "── User [%s] ──\n"
+                                     (magnus-trace--format-time timestamp))
+                             'face 'magnus-trace-separator))
+          (insert (propertize (concat content "\n\n")
+                             'face 'magnus-trace-user)))))
+     ((string= type "assistant")
+      (let ((content (alist-get 'content message)))
+        (when (vectorp content)
+          (let ((has-output nil))
+            (seq-doseq (block content)
+              (let ((block-type (alist-get 'type block)))
+                (cond
+                 ((string= block-type "thinking")
+                  (let ((thinking (alist-get 'thinking block)))
+                    (when (and thinking (not (string-empty-p thinking)))
+                      (unless has-output
+                        (insert (propertize (format "── Thinking [%s] ──\n"
+                                                   (magnus-trace--format-time timestamp))
+                                           'face 'magnus-trace-separator))
+                        (setq has-output t))
+                      (insert (propertize (concat thinking "\n\n")
+                                         'face 'magnus-trace-thinking)))))
+                 ((string= block-type "text")
+                  (let ((text (alist-get 'text block)))
+                    (when (and text (not (string-empty-p text)))
+                      (unless has-output
+                        (insert (propertize (format "── Assistant [%s] ──\n"
+                                                   (magnus-trace--format-time timestamp))
+                                           'face 'magnus-trace-separator))
+                        (setq has-output t))
+                      (insert (propertize (concat text "\n\n")
+                                         'face 'magnus-trace-assistant))))))))))))))
+
+(defun magnus-trace--format-time (timestamp)
+  "Format ISO TIMESTAMP to HH:MM:SS."
+  (if (and timestamp (stringp timestamp))
+      (if (string-match "T\\([0-9]+:[0-9]+:[0-9]+\\)" timestamp)
+          (match-string 1 timestamp)
+        "")
+    ""))
+
+(defun magnus-process--ensure-trace-timer ()
+  "Ensure the trace auto-refresh timer is running."
+  (unless magnus-trace--timer
+    (setq magnus-trace--timer
+          (run-with-timer 2 2 #'magnus-process--sync-all-traces))))
+
+(defun magnus-process--sync-all-traces ()
+  "Auto-refresh all open trace buffers."
+  (dolist (instance (magnus-instances-list))
+    (let ((trace-buf (get-buffer (format "*trace:%s*" (magnus-instance-name instance)))))
+      (when (and trace-buf (buffer-live-p trace-buf))
+        (with-current-buffer trace-buf
+          (condition-case nil
+              (magnus-trace-refresh)
+            (error nil)))))))
+
 (defun magnus-process--setup-sentinel (instance buffer)
   "Set up process monitoring for INSTANCE in BUFFER."
   (when-let ((process (get-buffer-process buffer)))

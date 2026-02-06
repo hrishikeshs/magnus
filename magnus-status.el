@@ -70,6 +70,7 @@
     (define-key map (kbd "S") #'magnus-status-resume)
     (define-key map (kbd "d") #'magnus-status-chdir)
     (define-key map (kbd "m") #'magnus-status-send-message)
+    (define-key map (kbd "t") #'magnus-status-trace)
     (define-key map (kbd "g") #'magnus-status-refresh)
     (define-key map (kbd "x") #'magnus-status-context)
     (define-key map (kbd "C") #'magnus-status-coordination)
@@ -405,6 +406,13 @@ directory, or `magnus-default-directory', or `default-directory'."
             (magnus-status-refresh))
         (user-error "Instance '%s' is not suspended"
                    (magnus-instance-name instance)))
+    (user-error "No instance at point")))
+
+(defun magnus-status-trace ()
+  "Open the thinking trace for the instance at point."
+  (interactive)
+  (if-let ((instance (magnus-status--get-instance-at-point)))
+      (magnus-process-trace instance)
     (user-error "No instance at point")))
 
 (defun magnus-status-send-message ()
