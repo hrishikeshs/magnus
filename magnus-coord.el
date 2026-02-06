@@ -148,13 +148,29 @@ Returns list of (agent-name . context-line) pairs."
                      (string= (magnus-instance-directory inst) directory)))
               (magnus-instances-list)))
 
+(defun magnus-coord--extract-sender-and-message (context-line target-name)
+  "Extract sender name and message from CONTEXT-LINE aimed at TARGET-NAME.
+Returns (sender . message) or nil."
+  (when (string-match
+         "\\[.*?\\] \\([^:]+\\): .*?@[^ ]+ \\(.*\\)"
+         context-line)
+    (let ((sender (match-string 1 context-line))
+          (message (match-string 2 context-line)))
+      (cons sender (string-trim message)))))
+
 (defun magnus-coord--send-mention-notification (instance context-line)
-  "Send a mention notification to INSTANCE with CONTEXT-LINE."
+  "Send a mention notification to INSTANCE with CONTEXT-LINE.
+Formats the message as a direct user instruction so Claude acts on it."
   (when-let ((buffer (magnus-instance-buffer instance)))
     (when (buffer-live-p buffer)
-      (let ((msg (format "You were @mentioned in .magnus-coord.md: \"%s\" — Read .magnus-coord.md now, respond in the Log section, and then act on what was asked. First, acknowledge by appending a line like: [HH:MM] %s: Acknowledged, reading coordination file."
-                         context-line
-                         (magnus-instance-name instance))))
+      (let* ((name (magnus-instance-name instance))
+             (parsed (magnus-coord--extract-sender-and-message context-line name))
+             (msg (if parsed
+                      (format "%s (another agent) says: %s — Do this now. Log your acknowledgment and progress in .magnus-coord.md"
+                              (car parsed) (cdr parsed))
+                    ;; Fallback if we can't parse the sender
+                    (format "Another agent mentioned you in .magnus-coord.md: \"%s\" — Read the file, do what's asked, and log your progress there."
+                            context-line))))
         (with-current-buffer buffer
           (vterm-send-string msg)
           (vterm-send-return))))))
