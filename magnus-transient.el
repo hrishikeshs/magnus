@@ -73,8 +73,9 @@
 (defun magnus-create-choose-dir ()
   "Create instance in a chosen directory."
   (interactive)
-  (call-interactively #'magnus-process-create)
-  (magnus-status-refresh))
+  (let ((dir (read-directory-name "Directory: " nil nil t)))
+    (magnus-process-create dir)
+    (magnus-status-refresh)))
 
 (defun magnus-create-project-root ()
   "Create instance in the current project root."
@@ -87,12 +88,17 @@
       (user-error "Not in a project"))))
 
 (defun magnus--project-root ()
-  "Get the current project root."
-  (when (fboundp 'project-current)
-    (when-let ((project (project-current)))
-      (if (fboundp 'project-root)
-          (project-root project)
-        (car (project-roots project))))))
+  "Get the current project root.
+Avoids triggering interactive prompts from Projectile."
+  (or
+   (when (and (fboundp 'projectile-project-root)
+              (bound-and-true-p projectile-mode))
+     (ignore-errors (projectile-project-root)))
+   (when (fboundp 'project-current)
+     (when-let ((project (project-current 'maybe)))
+       (if (fboundp 'project-root)
+           (project-root project)
+         (car (project-roots project)))))))
 
 ;;; Instance actions
 

@@ -43,13 +43,19 @@ NAME is the instance name.  If nil, auto-generates one."
     (read-directory-name "Directory: " default nil t)))
 
 (defun magnus-process--project-root ()
-  "Get the current project root if available."
-  (when (fboundp 'project-current)
-    (when-let ((project (project-current)))
-      (if (fboundp 'project-root)
-          (project-root project)
-        ;; Emacs < 28
-        (car (project-roots project))))))
+  "Get the current project root if available.
+Avoids triggering interactive prompts from Projectile."
+  (or
+   ;; Try projectile directly if available (non-interactive)
+   (when (and (fboundp 'projectile-project-root)
+              (bound-and-true-p projectile-mode))
+     (ignore-errors (projectile-project-root)))
+   ;; Fall back to project.el with `maybe' to avoid prompting
+   (when (fboundp 'project-current)
+     (when-let ((project (project-current 'maybe)))
+       (if (fboundp 'project-root)
+           (project-root project)
+         (car (project-roots project)))))))
 
 (defun magnus-process--spawn (instance)
   "Spawn a Claude Code process for INSTANCE."

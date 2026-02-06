@@ -312,10 +312,18 @@
     (user-error "No instance at point")))
 
 (defun magnus-status-create ()
-  "Create a new Claude Code instance."
+  "Create a new Claude Code instance.
+Uses the directory of the instance at point, or the first instance's
+directory, or `magnus-default-directory', or `default-directory'."
   (interactive)
-  (call-interactively #'magnus-process-create)
-  (magnus-status-refresh))
+  (let ((dir (or (when-let ((inst (magnus-status--get-instance-at-point)))
+                   (magnus-instance-directory inst))
+                 (when-let ((inst (car (magnus-instances-list))))
+                   (magnus-instance-directory inst))
+                 magnus-default-directory
+                 default-directory)))
+    (magnus-process-create dir)
+    (magnus-status-refresh)))
 
 (defun magnus-status-kill ()
   "Kill the instance at point."
