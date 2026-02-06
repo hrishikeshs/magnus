@@ -152,7 +152,9 @@ Returns list of (agent-name . context-line) pairs."
   "Send a mention notification to INSTANCE with CONTEXT-LINE."
   (when-let ((buffer (magnus-instance-buffer instance)))
     (when (buffer-live-p buffer)
-      (let ((msg (format "*** You were mentioned in coordination file: %s" context-line)))
+      (let ((msg (format "You were @mentioned in .magnus-coord.md: \"%s\" — Read .magnus-coord.md now, respond in the Log section, and then act on what was asked. First, acknowledge by appending a line like: [HH:MM] %s: Acknowledged, reading coordination file."
+                         context-line
+                         (magnus-instance-name instance))))
         (with-current-buffer buffer
           (vterm-send-string msg)
           (vterm-send-return))))))
