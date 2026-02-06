@@ -20,7 +20,7 @@
 
 ;;; Customization
 
-(defcustom magnus-attention-check-interval 5
+(defcustom magnus-attention-check-interval 10
   "Seconds between checks for instances needing attention."
   :type 'number
   :group 'magnus)

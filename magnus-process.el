@@ -77,9 +77,8 @@ Avoids triggering interactive prompts from Projectile."
       (magnus-process--setup-sentinel instance buffer)
       ;; Send onboarding message after Claude starts
       (run-with-timer 3 nil #'magnus-process--send-onboarding instance)
-      ;; Detect and store session ID after Claude creates it
-      (run-with-timer 5 nil #'magnus-process--detect-session
-                      instance directory sessions-before)
+      ;; Watch for new session to appear
+      (magnus-process--watch-for-session instance directory sessions-before)
       buffer)))
 
 (defun magnus-process--send-onboarding (instance)
@@ -110,19 +109,42 @@ Announce your work area and files you'll touch."
     (when (file-directory-p sessions-dir)
       (directory-files sessions-dir nil "^[^.]"))))
 
-(defun magnus-process--detect-session (instance directory sessions-before)
-  "Detect new session for INSTANCE in DIRECTORY.
+(defun magnus-process--watch-for-session (instance directory sessions-before)
+  "Watch for a new session to appear for INSTANCE in DIRECTORY.
 SESSIONS-BEFORE is the list of sessions that existed before spawning."
+  (let* ((project-hash (magnus-process--project-hash directory))
+         (sessions-dir (expand-file-name
+                        (concat "projects/" project-hash)
+                        (expand-file-name ".claude" (getenv "HOME")))))
+    ;; Ensure directory exists before watching
+    (unless (file-directory-p sessions-dir)
+      (make-directory sessions-dir t))
+    (let ((descriptor
+           (file-notify-add-watch
+            sessions-dir '(change)
+            (lambda (event)
+              (magnus-process--handle-session-event
+               instance directory sessions-before descriptor event)))))
+      ;; Auto-cancel after 30s in case it never fires
+      (run-with-timer 30 nil
+                      (lambda ()
+                        (when descriptor
+                          (ignore-errors (file-notify-rm-watch descriptor))))))))
+
+(defun magnus-process--handle-session-event (instance directory sessions-before descriptor event)
+  "Handle session directory EVENT for INSTANCE.
+Compares against SESSIONS-BEFORE and removes DESCRIPTOR when found."
   (let* ((sessions-after (magnus-process--list-sessions directory))
          (new-sessions (cl-set-difference sessions-after sessions-before :test #'string=)))
     (when new-sessions
-      ;; If multiple new sessions (unlikely), pick the most recent
       (let ((session-id (if (= 1 (length new-sessions))
                             (car new-sessions)
                           (magnus-process--most-recent-session directory new-sessions))))
         (magnus-instances-update instance :session-id session-id)
         (message "Captured session %s for %s"
-                 session-id (magnus-instance-name instance))))))
+                 session-id (magnus-instance-name instance)))
+      ;; Stop watching once found
+      (ignore-errors (file-notify-rm-watch descriptor)))))
 
 (defun magnus-process--most-recent-session (directory sessions)
   "Find the most recently modified session in DIRECTORY from SESSIONS list."
@@ -330,7 +352,7 @@ Maps C-g to send ESC to Claude, since Emacs intercepts the real ESC key."
   "Ensure the trace auto-refresh timer is running."
   (unless magnus-trace--timer
     (setq magnus-trace--timer
-          (run-with-timer 2 2 #'magnus-process--sync-all-traces))))
+          (run-with-timer 10 10 #'magnus-process--sync-all-traces))))
 
 (defun magnus-process--sync-all-traces ()
   "Auto-refresh all open trace buffers."

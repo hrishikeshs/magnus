@@ -282,8 +282,8 @@ Magnus avoids triggering interactive Helm/Projectile prompts when creating insta
 ;; Where to store state (default: ~/.emacs.d/magnus-state.el)
 (setq magnus-state-file "~/.emacs.d/magnus-state.el")
 
-;; Attention check interval in seconds (default: 2)
-(setq magnus-attention-check-interval 2)
+;; Attention check interval in seconds (default: 10)
+(setq magnus-attention-check-interval 10)
 
 ;; Patterns that indicate an instance needs attention
 (setq magnus-attention-patterns
