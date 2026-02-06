@@ -68,6 +68,9 @@ Default is 1 hour."
     map)
   "Keymap for `magnus-context-mode'.")
 
+;; Mode is defined conditionally based on markdown-mode availability
+(declare-function magnus-context-mode "magnus-context")
+
 (if (fboundp 'markdown-mode)
     (define-derived-mode magnus-context-mode markdown-mode "Magnus-Context"
       "Major mode for magnus context buffers.
@@ -134,7 +137,7 @@ If DIRECTORY is nil, uses the current project or default-directory."
         (when-let ((project (project-current)))
           (if (fboundp 'project-root)
               (project-root project)
-            (car (project-roots project)))))
+            (car (with-no-warnings (project-roots project))))))
       default-directory))
 
 ;;; Persistence
@@ -279,8 +282,8 @@ If DIRECTORY is nil, uses the current project or default-directory."
           (insert (string-trim content))
           (insert "\n```\n\n"))))))
 
-(defun magnus-context--fetch-error (buffer pos url err)
-  "Handle fetch error for URL in BUFFER at POS."
+(defun magnus-context--fetch-error (buffer pos _url err)
+  "Handle fetch error in BUFFER at POS with ERR."
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
       (save-excursion
@@ -383,7 +386,7 @@ The file is placed in the project directory for easy access."
 (defun magnus-context--save-all ()
   "Save all context buffers."
   (maphash
-   (lambda (dir buffer)
+   (lambda (_dir buffer)
      (when (buffer-live-p buffer)
        (with-current-buffer buffer
          (magnus-context-save))))

@@ -19,6 +19,10 @@
 (declare-function magnus-dispatch "magnus-transient")
 (declare-function magnus-context "magnus-context")
 
+;; Defined in magnus.el
+(defvar magnus-buffer-name)
+(defvar magnus-default-directory)
+
 ;;; Faces
 
 (defface magnus-instance-name
@@ -164,7 +168,6 @@ Also reconciles coordination files, removing stale entries."
   "Insert a line for INSTANCE."
   (let* ((name (magnus-instance-name instance))
          (directory (magnus-instance-directory instance))
-         (status (magnus-instance-status instance))
          (suspended (magnus-process-suspended-p instance))
          (running (magnus-process-running-p instance))
          (status-str (cond (suspended "suspended")
@@ -430,8 +433,7 @@ directory, or `magnus-default-directory', or `default-directory'."
   "Change the working directory of the instance at point."
   (interactive)
   (if-let ((instance (magnus-status--get-instance-at-point)))
-      (let* ((current-dir (magnus-instance-directory instance))
-             (new-dir (read-directory-name "New directory: " nil nil t)))
+      (let* ((new-dir (read-directory-name "New directory: " nil nil t)))
         (magnus-process-chdir instance new-dir)
         (magnus-status-refresh))
     (user-error "No instance at point")))

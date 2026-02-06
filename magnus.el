@@ -50,6 +50,12 @@
 
 (require 'cl-lib)
 
+(declare-function magnus-persistence-load "magnus-persistence")
+(declare-function magnus-attention-start "magnus-attention")
+(declare-function magnus-coord-start-reminders "magnus-coord")
+(declare-function magnus-status "magnus-status")
+(declare-function magnus-process-create "magnus-process")
+
 ;;; Customization
 
 (defgroup magnus nil

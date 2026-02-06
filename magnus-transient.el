@@ -100,7 +100,7 @@ Avoids triggering interactive prompts from Projectile."
      (when-let ((project (project-current 'maybe)))
        (if (fboundp 'project-root)
            (project-root project)
-         (car (project-roots project)))))))
+         (car (with-no-warnings (project-roots project))))))))
 
 ;;; Instance actions
 

@@ -15,6 +15,9 @@
 
 (declare-function magnus-process-reconnect "magnus-process")
 
+;; Defined in magnus.el
+(defvar magnus-state-file)
+
 ;;; Persistence
 
 (defun magnus-persistence-save ()

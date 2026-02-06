@@ -18,6 +18,9 @@
 (require 'magnus-instances)
 (require 'filenotify)
 
+(declare-function vterm-send-string "vterm")
+(declare-function vterm-send-return "vterm")
+
 ;;; Customization
 
 (defcustom magnus-coord-file ".magnus-coord.md"
@@ -194,8 +197,8 @@ Returns list of (agent-name . context-line) pairs."
                      (string= (magnus-instance-directory inst) directory)))
               (magnus-instances-list)))
 
-(defun magnus-coord--extract-sender-and-message (context-line target-name)
-  "Extract sender name and message from CONTEXT-LINE aimed at TARGET-NAME.
+(defun magnus-coord--extract-sender-and-message (context-line _target-name)
+  "Extract sender name and message from CONTEXT-LINE.
 Returns (sender . message) or nil."
   (when (string-match
          "\\[.*?\\] \\([^:]+\\): .*?@[^ ]+ \\(.*\\)"
@@ -263,8 +266,8 @@ Formats the message as a direct user instruction so Claude acts on it."
   (with-temp-file file
     (insert (magnus-coord--instructions-content directory))))
 
-(defun magnus-coord--instructions-content (directory)
-  "Generate instructions content for DIRECTORY."
+(defun magnus-coord--instructions-content (_directory)
+  "Generate instructions content."
   (format "# Magnus Coordination Protocol
 
 You are one of multiple Claude Code agents working on this project.
@@ -587,7 +590,7 @@ Show at most LIMIT entries (default 5)."
         (when-let ((project (project-current)))
           (if (fboundp 'project-root)
               (project-root project)
-            (car (project-roots project)))))
+            (car (with-no-warnings (project-roots project))))))
       (read-directory-name "Project directory: ")))
 
 (provide 'magnus-coord)

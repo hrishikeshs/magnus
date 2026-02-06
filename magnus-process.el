@@ -17,6 +17,12 @@
 
 (declare-function magnus-status-refresh "magnus-status")
 
+;; Variables defined in magnus.el
+(defvar magnus-claude-executable)
+(defvar magnus-default-directory)
+(defvar magnus-instance-name-generator)
+(defvar magnus-buffer-name)
+
 ;;; Process creation
 
 (defun magnus-process-create (&optional directory name)
@@ -55,7 +61,7 @@ Avoids triggering interactive prompts from Projectile."
      (when-let ((project (project-current 'maybe)))
        (if (fboundp 'project-root)
            (project-root project)
-         (car (project-roots project)))))))
+         (car (with-no-warnings (project-roots project))))))))
 
 (defun magnus-process--spawn (instance)
   "Spawn a Claude Code process for INSTANCE."
@@ -85,8 +91,7 @@ Avoids triggering interactive prompts from Projectile."
   "Send onboarding message to INSTANCE."
   (when-let ((buffer (magnus-instance-buffer instance)))
     (when (buffer-live-p buffer)
-      (let ((name (magnus-instance-name instance))
-            (msg (magnus-process--onboarding-message instance)))
+      (let ((msg (magnus-process--onboarding-message instance)))
         (with-current-buffer buffer
           (vterm-send-string msg)
           (vterm-send-return))))))
@@ -119,20 +124,22 @@ SESSIONS-BEFORE is the list of sessions that existed before spawning."
     ;; Ensure directory exists before watching
     (unless (file-directory-p sessions-dir)
       (make-directory sessions-dir t))
-    (let ((descriptor
-           (file-notify-add-watch
-            sessions-dir '(change)
-            (lambda (event)
-              (magnus-process--handle-session-event
-               instance directory sessions-before descriptor event)))))
+    (let* ((descriptor nil)
+           (_watcher
+            (setq descriptor
+                  (file-notify-add-watch
+                   sessions-dir '(change)
+                   (lambda (_event)
+                     (magnus-process--handle-session-event
+                      instance directory sessions-before descriptor))))))
       ;; Auto-cancel after 30s in case it never fires
       (run-with-timer 30 nil
                       (lambda ()
                         (when descriptor
                           (ignore-errors (file-notify-rm-watch descriptor))))))))
 
-(defun magnus-process--handle-session-event (instance directory sessions-before descriptor event)
-  "Handle session directory EVENT for INSTANCE.
+(defun magnus-process--handle-session-event (instance directory sessions-before descriptor)
+  "Handle session directory change for INSTANCE.
 Compares against SESSIONS-BEFORE and removes DESCRIPTOR when found."
   (let* ((sessions-after (magnus-process--list-sessions directory))
          (new-sessions (cl-set-difference sessions-after sessions-before :test #'string=)))
@@ -338,7 +345,7 @@ Maps C-g to send ESC to Claude, since Emacs intercepts the real ESC key."
                                            'face 'magnus-trace-separator))
                         (setq has-output t))
                       (insert (propertize (concat text "\n\n")
-                                         'face 'magnus-trace-assistant))))))))))))))
+                                         'face 'magnus-trace-assistant)))))))))))))))
 
 (defun magnus-trace--format-time (timestamp)
   "Format ISO TIMESTAMP to HH:MM:SS."
@@ -388,7 +395,7 @@ If FORCE is non-nil, forcefully terminate."
               (kill-process process)
             ;; Send C-c to gracefully exit
             (with-current-buffer buffer
-              (vterm-send-C-c)))))
+              (vterm-send-key "C-c")))))
       ;; Give process time to exit, then kill buffer
       (run-with-timer
        1 nil
@@ -446,8 +453,7 @@ Sends SIGCONT to continue the process."
   "Change INSTANCE's working directory to DIRECTORY.
 Uses the stored session ID, kills the instance, and respawns
 in the new directory with --resume to preserve conversation history."
-  (let* ((old-dir (magnus-instance-directory instance))
-         (new-dir (expand-file-name directory))
+  (let* ((new-dir (expand-file-name directory))
          (name (magnus-instance-name instance))
          (session-id (magnus-instance-session-id instance)))
     ;; Update the directory in our records (keep session-id)
