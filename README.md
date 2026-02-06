@@ -236,6 +236,26 @@ New instances also receive an onboarding message that introduces them to the Mag
 
 This is advisory coordination — agents are instructed to follow the protocol, and Claude is good at it.
 
+## Tips
+
+### ESC key in vterm
+
+Emacs intercepts `ESC` as a Meta prefix, so it never reaches Claude Code. Add this to your config to make `ESC` work inside vterm buffers (`Alt` still works as Meta):
+
+```elisp
+(with-eval-after-load 'vterm
+  (define-key vterm-mode-map (kbd "<escape>")
+    (lambda () (interactive) (vterm-send-key "<escape>"))))
+```
+
+### Helm / Projectile users
+
+Magnus avoids triggering interactive Helm/Projectile prompts when creating instances. If you still experience hangs, set a default directory:
+
+```elisp
+(setq magnus-default-directory "~/workspace")
+```
+
 ## Customization
 
 ```elisp
