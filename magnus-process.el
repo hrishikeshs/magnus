@@ -56,7 +56,8 @@ NAME is the instance name.  If nil, auto-generates one."
   (let* ((name (magnus-instance-name instance))
          (directory (magnus-instance-directory instance))
          (buffer-name (format "*claude:%s*" name))
-         (default-directory directory))
+         (default-directory directory)
+         (sessions-before (magnus-process--list-sessions directory)))
     ;; Create vterm buffer
     (let ((buffer (magnus-process--create-vterm-buffer buffer-name)))
       (magnus-instances-update instance
@@ -70,6 +71,9 @@ NAME is the instance name.  If nil, auto-generates one."
       (magnus-process--setup-sentinel instance buffer)
       ;; Send onboarding message after Claude starts
       (run-with-timer 3 nil #'magnus-process--send-onboarding instance)
+      ;; Detect and store session ID after Claude creates it
+      (run-with-timer 5 nil #'magnus-process--detect-session
+                      instance directory sessions-before)
       buffer)))
 
 (defun magnus-process--send-onboarding (instance)
@@ -90,6 +94,43 @@ Read .claude/magnus-instructions.md for the coordination protocol. \
 Check .magnus-coord.md before starting work - other agents may be active. \
 Announce your work area and files you'll touch."
             name)))
+
+(defun magnus-process--list-sessions (directory)
+  "List all session IDs for DIRECTORY."
+  (let* ((project-hash (magnus-process--project-hash directory))
+         (sessions-dir (expand-file-name
+                        (concat "projects/" project-hash)
+                        (expand-file-name ".claude" (getenv "HOME")))))
+    (when (file-directory-p sessions-dir)
+      (directory-files sessions-dir nil "^[^.]"))))
+
+(defun magnus-process--detect-session (instance directory sessions-before)
+  "Detect new session for INSTANCE in DIRECTORY.
+SESSIONS-BEFORE is the list of sessions that existed before spawning."
+  (let* ((sessions-after (magnus-process--list-sessions directory))
+         (new-sessions (cl-set-difference sessions-after sessions-before :test #'string=)))
+    (when new-sessions
+      ;; If multiple new sessions (unlikely), pick the most recent
+      (let ((session-id (if (= 1 (length new-sessions))
+                            (car new-sessions)
+                          (magnus-process--most-recent-session directory new-sessions))))
+        (magnus-instances-update instance :session-id session-id)
+        (message "Captured session %s for %s"
+                 session-id (magnus-instance-name instance))))))
+
+(defun magnus-process--most-recent-session (directory sessions)
+  "Find the most recently modified session in DIRECTORY from SESSIONS list."
+  (let* ((project-hash (magnus-process--project-hash directory))
+         (sessions-dir (expand-file-name
+                        (concat "projects/" project-hash)
+                        (expand-file-name ".claude" (getenv "HOME")))))
+    (car (sort sessions
+               (lambda (a b)
+                 (time-less-p
+                  (file-attribute-modification-time
+                   (file-attributes (expand-file-name b sessions-dir)))
+                  (file-attribute-modification-time
+                   (file-attributes (expand-file-name a sessions-dir)))))))))
 
 (defun magnus-process--create-vterm-buffer (buffer-name)
   "Create a vterm buffer with BUFFER-NAME."
@@ -178,13 +219,13 @@ Sends SIGCONT to continue the process."
 
 (defun magnus-process-chdir (instance directory)
   "Change INSTANCE's working directory to DIRECTORY.
-Finds the current session ID, kills the instance, and respawns
+Uses the stored session ID, kills the instance, and respawns
 in the new directory with --resume to preserve conversation history."
   (let* ((old-dir (magnus-instance-directory instance))
          (new-dir (expand-file-name directory))
          (name (magnus-instance-name instance))
-         (session-id (magnus-process--find-session-id old-dir)))
-    ;; Update the directory in our records
+         (session-id (magnus-instance-session-id instance)))
+    ;; Update the directory in our records (keep session-id)
     (magnus-instances-update instance :directory new-dir)
     ;; Kill the old process and buffer
     (magnus-process-kill instance t)
@@ -195,25 +236,7 @@ in the new directory with --resume to preserve conversation history."
        (magnus-process--spawn-with-session instance session-id)))
     (message "Moving %s to %s%s..."
              name new-dir
-             (if session-id " (resuming session)" ""))))
-
-(defun magnus-process--find-session-id (directory)
-  "Find the most recent Claude session ID for DIRECTORY.
-Returns the session ID string, or nil if not found."
-  (let* ((project-hash (magnus-process--project-hash directory))
-         (sessions-dir (expand-file-name
-                        (concat "projects/" project-hash)
-                        (expand-file-name ".claude" (getenv "HOME")))))
-    (when (file-directory-p sessions-dir)
-      (let ((sessions (directory-files sessions-dir nil "^[^.]")))
-        ;; Get most recently modified session
-        (car (sort sessions
-                   (lambda (a b)
-                     (time-less-p
-                      (file-attribute-modification-time
-                       (file-attributes (expand-file-name b sessions-dir)))
-                      (file-attribute-modification-time
-                       (file-attributes (expand-file-name a sessions-dir)))))))))))
+             (if session-id " (resuming session)" " (no session to resume)"))))
 
 (defun magnus-process--project-hash (directory)
   "Convert DIRECTORY to Claude's project hash format.
