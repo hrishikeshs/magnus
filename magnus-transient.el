@@ -34,7 +34,8 @@
    ("r" "Rename instance" magnus-status-rename)
    ("R" "Restart instance" magnus-status-restart)
    ("s" "Suspend instance" magnus-status-suspend)
-   ("S" "Resume instance" magnus-status-resume)]
+   ("S" "Resume instance" magnus-status-resume)
+   ("d" "Change directory" magnus-status-chdir)]
   ["Context (shared notes)"
    ("x" "Open context buffer" magnus-context)
    ("e" "Export to file" magnus-context-export-for-agent)
@@ -105,7 +106,8 @@
    ("r" "Rename" magnus-status-rename)
    ("R" "Restart" magnus-status-restart)
    ("s" "Suspend" magnus-status-suspend)
-   ("S" "Resume" magnus-status-resume)])
+   ("S" "Resume" magnus-status-resume)
+   ("d" "Change directory" magnus-status-chdir)])
 
 (defun magnus-transient--instance-description ()
   "Return description for current instance."

@@ -150,6 +150,7 @@ Or in your config:
 | `R`   | Restart instance           |
 | `s`   | Suspend instance           |
 | `S`   | Resume instance            |
+| `d`   | Change directory           |
 | `x`   | Open context buffer        |
 | `C`   | Open coordination file     |
 | `a`   | Next in attention queue    |
@@ -173,6 +174,7 @@ Press `?` in the status buffer to see all commands organized by category:
 | `R` | Restart instance    |
 | `s` | Suspend instance    |
 | `S` | Resume instance     |
+| `d` | Change directory    |
 
 **Context (shared notes)**
 | Key | Action                    |

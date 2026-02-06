@@ -176,6 +176,79 @@ Sends SIGCONT to continue the process."
   "Return non-nil if INSTANCE is suspended."
   (eq (magnus-instance-status instance) 'suspended))
 
+(defun magnus-process-chdir (instance directory)
+  "Change INSTANCE's working directory to DIRECTORY.
+Finds the current session ID, kills the instance, and respawns
+in the new directory with --resume to preserve conversation history."
+  (let* ((old-dir (magnus-instance-directory instance))
+         (new-dir (expand-file-name directory))
+         (name (magnus-instance-name instance))
+         (session-id (magnus-process--find-session-id old-dir)))
+    ;; Update the directory in our records
+    (magnus-instances-update instance :directory new-dir)
+    ;; Kill the old process and buffer
+    (magnus-process-kill instance t)
+    ;; Respawn after a delay with the session ID
+    (run-with-timer
+     2 nil
+     (lambda ()
+       (magnus-process--spawn-with-session instance session-id)))
+    (message "Moving %s to %s%s..."
+             name new-dir
+             (if session-id " (resuming session)" ""))))
+
+(defun magnus-process--find-session-id (directory)
+  "Find the most recent Claude session ID for DIRECTORY.
+Returns the session ID string, or nil if not found."
+  (let* ((project-hash (magnus-process--project-hash directory))
+         (sessions-dir (expand-file-name
+                        (concat "projects/" project-hash)
+                        (expand-file-name ".claude" (getenv "HOME")))))
+    (when (file-directory-p sessions-dir)
+      (let ((sessions (directory-files sessions-dir nil "^[^.]")))
+        ;; Get most recently modified session
+        (car (sort sessions
+                   (lambda (a b)
+                     (time-less-p
+                      (file-attribute-modification-time
+                       (file-attributes (expand-file-name b sessions-dir)))
+                      (file-attribute-modification-time
+                       (file-attributes (expand-file-name a sessions-dir)))))))))))
+
+(defun magnus-process--project-hash (directory)
+  "Convert DIRECTORY to Claude's project hash format.
+Replaces slashes, spaces, and tildes with hyphens."
+  (let ((path (expand-file-name directory)))
+    ;; Remove leading slash and replace special chars with hyphens
+    (replace-regexp-in-string
+     "^-+" ""
+     (replace-regexp-in-string "[/ ~]+" "-" path))))
+
+(defun magnus-process--spawn-with-session (instance &optional session-id)
+  "Spawn a Claude Code process for INSTANCE, optionally resuming SESSION-ID."
+  (let* ((name (magnus-instance-name instance))
+         (directory (magnus-instance-directory instance))
+         (buffer-name (format "*claude:%s*" name))
+         (default-directory directory))
+    ;; Create vterm buffer
+    (let ((buffer (magnus-process--create-vterm-buffer buffer-name)))
+      (magnus-instances-update instance
+                               :buffer buffer
+                               :status 'running)
+      ;; Send the claude command with optional --resume
+      (with-current-buffer buffer
+        (if session-id
+            (vterm-send-string (format "%s --resume %s"
+                                       magnus-claude-executable session-id))
+          (vterm-send-string magnus-claude-executable))
+        (vterm-send-return))
+      ;; Set up process sentinel
+      (magnus-process--setup-sentinel instance buffer)
+      ;; Only send onboarding if no session (fresh start)
+      (unless session-id
+        (run-with-timer 3 nil #'magnus-process--send-onboarding instance))
+      buffer)))
+
 ;;; Instance interaction
 
 (defun magnus-process-switch-to (instance)
