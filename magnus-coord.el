@@ -406,15 +406,16 @@ Returns a plist with :active, :log, and :decisions."
       (goto-char (point-min))
       (if (re-search-forward "^## Log\n+" nil t)
           (progn
-            ;; Find end of comments
-            (while (looking-at "^<!--")
-              (forward-line 1)
-              (while (not (looking-at "-->"))
-                (forward-line 1))
-              (forward-line 1))
-            ;; Skip blank lines after comments
-            (while (looking-at "^$")
-              (forward-line 1))
+            ;; Skip HTML comments (single or multi-line) and blank lines
+            (while (and (not (eobp))
+                        (or (looking-at "^$")
+                            (looking-at "^<!--")))
+              (if (looking-at "^<!--")
+                  ;; Jump past closing -->, whether same line or later
+                  (if (re-search-forward "-->" nil t)
+                      (forward-line 1)
+                    (goto-char (point-max)))
+                (forward-line 1)))
             (insert (format "[%s] %s: %s\n\n" time agent message)))
         ;; No Log section, append at end
         (goto-char (point-max))
