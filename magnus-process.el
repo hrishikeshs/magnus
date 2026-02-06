@@ -500,10 +500,7 @@ in the new directory with --resume to preserve conversation history."
   "Convert DIRECTORY to Claude's project hash format.
 Replaces slashes, spaces, and tildes with hyphens."
   (let ((path (expand-file-name directory)))
-    ;; Remove leading slash and replace special chars with hyphens
-    (replace-regexp-in-string
-     "^-+" ""
-     (replace-regexp-in-string "[/ ~]+" "-" path))))
+    (replace-regexp-in-string "[/ ~]+" "-" path)))
 
 (defun magnus-process--spawn-with-session (instance &optional session-id)
   "Spawn a Claude Code process for INSTANCE, optionally resuming SESSION-ID."
