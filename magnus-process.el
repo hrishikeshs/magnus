@@ -106,13 +106,15 @@ Announce your work area and files you'll touch."
             name)))
 
 (defun magnus-process--list-sessions (directory)
-  "List all session IDs for DIRECTORY."
+  "List all session IDs for DIRECTORY.
+Extracts IDs from .jsonl filenames in the project directory."
   (let* ((project-hash (magnus-process--project-hash directory))
          (sessions-dir (expand-file-name
                         (concat "projects/" project-hash)
                         (expand-file-name ".claude" (getenv "HOME")))))
     (when (file-directory-p sessions-dir)
-      (directory-files sessions-dir nil "^[^.]"))))
+      (mapcar (lambda (f) (file-name-sans-extension f))
+              (directory-files sessions-dir nil "\\.jsonl$")))))
 
 (defun magnus-process--watch-for-session (instance directory sessions-before)
   "Watch for a new session to appear for INSTANCE in DIRECTORY.
@@ -297,12 +299,11 @@ Maps C-g to send ESC to Claude, since Emacs intercepts the real ESC key."
 (defun magnus-process--session-jsonl-path (directory session-id)
   "Get the JSONL file path for SESSION-ID in DIRECTORY."
   (let* ((project-hash (magnus-process--project-hash directory))
-         (session-dir (expand-file-name
-                       (concat "projects/" project-hash "/" session-id)
-                       (expand-file-name ".claude" (getenv "HOME")))))
-    ;; Find the .jsonl file in the session directory
-    (when (file-directory-p session-dir)
-      (car (directory-files session-dir t "\\.jsonl$")))))
+         (jsonl-file (expand-file-name
+                      (concat "projects/" project-hash "/" session-id ".jsonl")
+                      (expand-file-name ".claude" (getenv "HOME")))))
+    (when (file-exists-p jsonl-file)
+      jsonl-file)))
 
 (defun magnus-trace--append-new-entries (jsonl-file)
   "Append new entries from JSONL-FILE to the current trace buffer."
