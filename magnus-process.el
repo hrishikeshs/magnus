@@ -116,7 +116,8 @@ Announce your work area and files you'll touch."
 
 (defun magnus-process--watch-for-session (instance directory sessions-before)
   "Watch for a new session to appear for INSTANCE in DIRECTORY.
-SESSIONS-BEFORE is the list of sessions that existed before spawning."
+SESSIONS-BEFORE is the list of sessions that existed before spawning.
+Uses both filenotify and polling fallback for robustness."
   (let* ((project-hash (magnus-process--project-hash directory))
          (sessions-dir (expand-file-name
                         (concat "projects/" project-hash)
@@ -125,22 +126,34 @@ SESSIONS-BEFORE is the list of sessions that existed before spawning."
     (unless (file-directory-p sessions-dir)
       (make-directory sessions-dir t))
     (let* ((descriptor nil)
-           (_watcher
-            (setq descriptor
-                  (file-notify-add-watch
-                   sessions-dir '(change)
-                   (lambda (_event)
-                     (magnus-process--handle-session-event
-                      instance directory sessions-before descriptor))))))
-      ;; Auto-cancel after 30s in case it never fires
-      (run-with-timer 30 nil
-                      (lambda ()
-                        (when descriptor
-                          (ignore-errors (file-notify-rm-watch descriptor))))))))
+           (poll-timer nil)
+           (cleanup-timer nil)
+           (detect-fn
+            (lambda ()
+              (magnus-process--detect-new-session
+               instance directory sessions-before
+               (list descriptor poll-timer cleanup-timer)))))
+      ;; Primary: file-notify watcher
+      (setq descriptor
+            (file-notify-add-watch
+             sessions-dir '(change)
+             (lambda (_event) (funcall detect-fn))))
+      ;; Fallback: poll every 5 seconds
+      (setq poll-timer
+            (run-with-timer 5 5 detect-fn))
+      ;; Final cleanup after 120 seconds
+      (setq cleanup-timer
+            (run-with-timer 120 nil
+                            (lambda ()
+                              (when descriptor
+                                (ignore-errors (file-notify-rm-watch descriptor)))
+                              (when poll-timer
+                                (cancel-timer poll-timer))))))))
 
-(defun magnus-process--handle-session-event (instance directory sessions-before descriptor)
-  "Handle session directory change for INSTANCE.
-Compares against SESSIONS-BEFORE and removes DESCRIPTOR when found."
+(defun magnus-process--detect-new-session (instance directory sessions-before resources)
+  "Try to detect a new session for INSTANCE in DIRECTORY.
+SESSIONS-BEFORE is the pre-spawn session list.
+RESOURCES is a list of (descriptor poll-timer cleanup-timer) to clean up on success."
   (let* ((sessions-after (magnus-process--list-sessions directory))
          (new-sessions (cl-set-difference sessions-after sessions-before :test #'string=)))
     (when new-sessions
@@ -150,8 +163,16 @@ Compares against SESSIONS-BEFORE and removes DESCRIPTOR when found."
         (magnus-instances-update instance :session-id session-id)
         (message "Captured session %s for %s"
                  session-id (magnus-instance-name instance)))
-      ;; Stop watching once found
-      (ignore-errors (file-notify-rm-watch descriptor)))))
+      ;; Clean up all watchers/timers
+      (let ((descriptor (nth 0 resources))
+            (poll-timer (nth 1 resources))
+            (cleanup-timer (nth 2 resources)))
+        (when descriptor
+          (ignore-errors (file-notify-rm-watch descriptor)))
+        (when poll-timer
+          (cancel-timer poll-timer))
+        (when cleanup-timer
+          (cancel-timer cleanup-timer))))))
 
 (defun magnus-process--most-recent-session (directory sessions)
   "Find the most recently modified session in DIRECTORY from SESSIONS list."
@@ -249,16 +270,22 @@ Maps C-g to send ESC to Claude, since Emacs intercepts the real ESC key."
   (when magnus-trace--instance
     (let* ((instance magnus-trace--instance)
            (session-id (magnus-instance-session-id instance))
-           (directory (magnus-instance-directory instance))
-           (jsonl-file (when session-id
-                         (magnus-process--session-jsonl-path directory session-id))))
-      (if (and jsonl-file (file-exists-p jsonl-file))
-          (magnus-trace--append-new-entries jsonl-file)
-        (let ((inhibit-read-only t))
-          (goto-char (point-max))
-          (unless (> (buffer-size) 0)
-            (insert (propertize "Waiting for session to start...\n"
-                               'face 'magnus-trace-separator))))))))
+           (directory (magnus-instance-directory instance)))
+      ;; Try to detect session-id if missing
+      (unless session-id
+        (let ((sessions (magnus-process--list-sessions directory)))
+          (when (= 1 (length sessions))
+            (setq session-id (car sessions))
+            (magnus-instances-update instance :session-id session-id))))
+      (let ((jsonl-file (when session-id
+                          (magnus-process--session-jsonl-path directory session-id))))
+        (if (and jsonl-file (file-exists-p jsonl-file))
+            (magnus-trace--append-new-entries jsonl-file)
+          (let ((inhibit-read-only t))
+            (goto-char (point-max))
+            (unless (> (buffer-size) 0)
+              (insert (propertize "Waiting for session to start...\n"
+                                 'face 'magnus-trace-separator)))))))))
 
 (defun magnus-trace-tail ()
   "Refresh and jump to the end of the trace buffer."
