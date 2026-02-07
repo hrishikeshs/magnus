@@ -289,7 +289,12 @@ Maps C-g to send ESC to Claude, since Emacs intercepts the real ESC key."
                                  (car sessions)
                                (magnus-process--most-recent-session
                                 directory sessions)))
-            (magnus-instances-update instance :session-id session-id))))
+            (when session-id
+              (magnus-instances-update instance :session-id session-id)
+              ;; Clear the waiting message now that we have a session
+              (let ((inhibit-read-only t))
+                (erase-buffer)
+                (setq magnus-trace--last-line-count 0))))))
       (let ((jsonl-file (when session-id
                           (magnus-process--session-jsonl-path directory session-id))))
         (if (and jsonl-file (file-exists-p jsonl-file))
@@ -528,7 +533,7 @@ in the new directory with --resume to preserve conversation history."
 (defun magnus-process--project-hash (directory)
   "Convert DIRECTORY to Claude's project hash format.
 Replaces slashes, spaces, and tildes with hyphens."
-  (let ((path (expand-file-name directory)))
+  (let ((path (directory-file-name (expand-file-name directory))))
     (replace-regexp-in-string "[/ ~]+" "-" path)))
 
 (defun magnus-process--spawn-with-session (instance &optional session-id)

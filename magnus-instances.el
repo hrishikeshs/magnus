@@ -106,7 +106,7 @@ Returns the new instance (not yet added to registry)."
   (magnus-instance--create
    :id (magnus-instances--generate-id)
    :name name
-   :directory (expand-file-name directory)
+   :directory (directory-file-name (expand-file-name directory))
    :buffer nil
    :created-at (current-time)
    :status 'stopped))
