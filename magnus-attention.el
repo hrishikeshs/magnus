@@ -184,42 +184,52 @@ Tries auto-approval first; falls back to the attention queue."
     (error nil)))
 
 (defun magnus-attention--buffer-has-prompt-p ()
-  "Check if current buffer has a prompt waiting for input."
-  ;; Only check last few lines - fast string match, no regex search
+  "Check if current buffer has a yes/no prompt on the last line."
+  (let ((last-line (magnus-attention--last-line)))
+    (when last-line
+      (cl-some (lambda (pattern)
+                 (string-match-p pattern last-line))
+               magnus-attention-patterns))))
+
+(defun magnus-attention--last-line ()
+  "Return the last non-empty line in the current buffer, or nil."
   (let* ((end (point-max))
-         (start (max (point-min) (- end 500)))  ; Last 500 chars only
-         (text (buffer-substring-no-properties start end)))
-    (cl-some (lambda (pattern)
-               (string-match-p pattern text))
-             magnus-attention-patterns)))
+         (start (max (point-min) (- end 500)))
+         (text (buffer-substring-no-properties start end))
+         (lines (split-string text "\n" t "[ \t]+")))
+    (car (last lines))))
 
 
 ;;; Auto-approval
 
+(defvar magnus-attention--prompt-anchors
+  '("\\[y/n\\]" "\\[Y/n\\]" "\\[yes/no\\]" "(y/n)" "(Y/n)" "Allow\\?" "Proceed\\?")
+  "Patterns that must appear on the last line to confirm it is a real yes/no prompt.
+Auto-approve only fires when the last line matches one of these AND an allowlist entry.")
+
 (defun magnus-attention--try-auto-approve (instance)
   "Try to auto-approve INSTANCE's permission prompt.
-Returns non-nil if the prompt was auto-approved."
+Only fires when the last line looks like a genuine yes/no prompt
+AND contains an allowlisted tool/command pattern."
   (when magnus-attention-auto-approve-patterns
     (when-let ((buffer (magnus-instance-buffer instance)))
       (when (buffer-live-p buffer)
-        (let ((prompt-text (magnus-attention--extract-prompt-text buffer)))
-          (when (and prompt-text
-                     (magnus-attention--matches-auto-approve-p prompt-text))
+        (let ((last-line (with-current-buffer buffer
+                           (magnus-attention--last-line))))
+          (when (and last-line
+                     (magnus-attention--is-prompt-line-p last-line)
+                     (magnus-attention--matches-auto-approve-p last-line))
             (with-current-buffer buffer
               (vterm-send-string "y")
               (vterm-send-return))
             (message "Magnus: auto-approved for %s" (magnus-instance-name instance))
             t))))))
 
-(defun magnus-attention--extract-prompt-text (buffer)
-  "Extract the permission prompt text from BUFFER.
-Returns the last non-empty line, which is typically the prompt."
-  (with-current-buffer buffer
-    (let* ((end (point-max))
-           (start (max (point-min) (- end 500)))
-           (text (buffer-substring-no-properties start end))
-           (lines (split-string text "\n" t "[ \t]+")))
-      (car (last lines)))))
+(defun magnus-attention--is-prompt-line-p (line)
+  "Return non-nil if LINE looks like an actual yes/no permission prompt."
+  (cl-some (lambda (pattern)
+             (string-match-p pattern line))
+           magnus-attention--prompt-anchors))
 
 (defun magnus-attention--matches-auto-approve-p (prompt-text)
   "Return non-nil if PROMPT-TEXT matches an auto-approve pattern."

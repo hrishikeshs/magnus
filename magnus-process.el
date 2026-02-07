@@ -182,15 +182,21 @@ RESOURCES is a list of (descriptor poll-timer cleanup-timer) to clean up on succ
          (sessions-dir (expand-file-name
                         (concat "projects/" project-hash)
                         (expand-file-name ".claude" (getenv "HOME")))))
-    (car (sort sessions
-               (lambda (a b)
-                 (time-less-p
-                  (file-attribute-modification-time
-                   (file-attributes
-                    (expand-file-name (concat b ".jsonl") sessions-dir)))
-                  (file-attribute-modification-time
-                   (file-attributes
-                    (expand-file-name (concat a ".jsonl") sessions-dir)))))))))
+    ;; Filter to sessions whose .jsonl files actually exist
+    (let ((valid (cl-remove-if-not
+                  (lambda (s)
+                    (file-exists-p
+                     (expand-file-name (concat s ".jsonl") sessions-dir)))
+                  sessions)))
+      (car (sort valid
+                 (lambda (a b)
+                   (time-less-p
+                    (file-attribute-modification-time
+                     (file-attributes
+                      (expand-file-name (concat b ".jsonl") sessions-dir)))
+                    (file-attribute-modification-time
+                     (file-attributes
+                      (expand-file-name (concat a ".jsonl") sessions-dir))))))))))
 
 (defun magnus-process--create-vterm-buffer (buffer-name)
   "Create a vterm buffer with BUFFER-NAME."
@@ -395,14 +401,21 @@ Maps C-g to send ESC to Claude, since Emacs intercepts the real ESC key."
           (run-with-timer 10 10 #'magnus-process--sync-all-traces))))
 
 (defun magnus-process--sync-all-traces ()
-  "Auto-refresh all open trace buffers."
-  (dolist (instance (magnus-instances-list))
-    (let ((trace-buf (get-buffer (format "*trace:%s*" (magnus-instance-name instance)))))
-      (when (and trace-buf (buffer-live-p trace-buf))
-        (with-current-buffer trace-buf
-          (condition-case nil
-              (magnus-trace-refresh)
-            (error nil)))))))
+  "Auto-refresh all open trace buffers.
+Cancels the timer when no trace buffers remain."
+  (let ((any-live nil))
+    (dolist (instance (magnus-instances-list))
+      (let ((trace-buf (get-buffer (format "*trace:%s*" (magnus-instance-name instance)))))
+        (when (and trace-buf (buffer-live-p trace-buf))
+          (setq any-live t)
+          (with-current-buffer trace-buf
+            (condition-case nil
+                (magnus-trace-refresh)
+              (error nil))))))
+    (unless any-live
+      (when magnus-trace--timer
+        (cancel-timer magnus-trace--timer)
+        (setq magnus-trace--timer nil)))))
 
 (defun magnus-process--setup-sentinel (instance buffer)
   "Set up process monitoring for INSTANCE in BUFFER."
@@ -445,13 +458,23 @@ If FORCE is non-nil, forcefully terminate."
   (magnus-process-kill instance force)
   (magnus-instances-remove instance))
 
+(defvar magnus-process--restarting nil
+  "Set of instance IDs currently mid-restart, to prevent double-spawn.")
+
 (defun magnus-process-restart (instance)
   "Restart the Claude Code process for INSTANCE."
-  (magnus-process-kill instance)
-  (run-with-timer
-   1.5 nil
-   (lambda ()
-     (magnus-process--spawn instance))))
+  (let ((id (magnus-instance-id instance)))
+    (when (member id magnus-process--restarting)
+      (user-error "Instance '%s' is already restarting"
+                  (magnus-instance-name instance)))
+    (push id magnus-process--restarting)
+    (magnus-process-kill instance)
+    (run-with-timer
+     1.5 nil
+     (lambda ()
+       (setq magnus-process--restarting
+             (delete id magnus-process--restarting))
+       (magnus-process--spawn instance)))))
 
 (defun magnus-process-suspend (instance)
   "Suspend the Claude Code process for INSTANCE.
