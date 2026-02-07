@@ -80,6 +80,11 @@ Instances: 3 [2 need attention]
 
 Magnus focuses one instance at a time. Handle the request, press `a`, and the next agent gets focus. No more competing popups.
 
+### Auto-Approve
+Common safe operations (file reads, edits, grep, tests) can be auto-approved so agents don't block on routine permissions. When a yes/no prompt matches an allowlisted pattern, Magnus sends `y` automatically.
+
+Built-in allowlist includes: `Read`, `Write`, `Edit`, `Glob`, `Grep`, safe Bash commands (`git`, `ls`, `npm test`, `cargo build`, `pytest`, etc.). Customize via `magnus-attention-auto-approve-patterns`. Set to `nil` to disable.
+
 ### Persistence
 Everything persists across Emacs sessions:
 - Running instances (reconnects if still alive)
@@ -165,6 +170,7 @@ Or in your config:
 | `C`   | Open coordination file     |
 | `a`   | Next in attention queue    |
 | `A`   | Show attention queue       |
+| `P`   | Purge all instances        |
 | `n/p` | Navigate instances         |
 | `g`   | Refresh                    |
 | `?`   | Show transient help menu   |
@@ -187,6 +193,7 @@ Press `?` in the status buffer to see all commands organized by category:
 | `d` | Change directory    |
 | `m` | Send message        |
 | `t` | Thinking trace      |
+| `P` | Purge all instances |
 
 **Context (shared notes)**
 | Key | Action                    |
@@ -206,7 +213,7 @@ Press `?` in the status buffer to see all commands organized by category:
 |-----|-----------------------------|
 | `a` | Next in attention queue     |
 | `A` | Show attention queue        |
-| `t` | Toggle attention monitoring |
+| `T` | Toggle attention monitoring |
 
 **Navigation**
 | Key   | Action          |
@@ -288,6 +295,11 @@ Magnus avoids triggering interactive Helm/Projectile prompts when creating insta
 ;; Patterns that indicate an instance needs attention
 (setq magnus-attention-patterns
       '("\\[y/n\\]" "\\[Y/n\\]" "Allow\\?" "Proceed\\?"))
+
+;; Auto-approve patterns (set to nil to disable auto-approval)
+(setq magnus-attention-auto-approve-patterns
+      '("Read" "Write" "Edit" "Glob" "Grep"
+        "Bash(git " "Bash(npm test" "Bash(cargo build"))
 
 ;; Disable automatic @mention notifications (default: t)
 (setq magnus-coord-mention-notify nil)
