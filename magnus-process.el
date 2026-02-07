@@ -99,10 +99,23 @@ Avoids triggering interactive prompts from Projectile."
 (defun magnus-process--onboarding-message (instance)
   "Generate onboarding message for INSTANCE."
   (let ((name (magnus-instance-name instance)))
-    (format "You are agent '%s', managed by Magnus (https://github.com/hrishikeshs/magnus). \
-Read .claude/magnus-instructions.md for the coordination protocol. \
-Check .magnus-coord.md before starting work - other agents may be active. \
-Announce your work area and files you'll touch."
+    (format "MANDATORY COORDINATION PROTOCOL — You are agent '%s', managed by Magnus.
+
+You MUST complete these steps IN ORDER before writing any code:
+
+1. Read .claude/magnus-instructions.md completely — it defines how agents coordinate.
+2. Read .magnus-coord.md — check the Active Work table for what other agents are doing.
+3. In the Log section of .magnus-coord.md, announce what you plan to work on and which files you will touch.
+4. Check the Active Work table for conflicts — if another agent claims files you need, post an @mention asking them to coordinate.
+5. Add your row to the Active Work table with your name, area, status 'in-progress', and files.
+6. ONLY THEN begin coding.
+
+While working:
+- Update .magnus-coord.md when you finish tasks or change scope.
+- If you need another agent's attention, @mention them by name in the Log — they will be notified automatically.
+- Check .magnus-coord.md periodically for messages directed at you.
+
+Do NOT skip these steps. Begin now with step 1."
             name)))
 
 (defun magnus-process--list-sessions (directory)
@@ -444,15 +457,17 @@ If FORCE is non-nil, forcefully terminate."
         (when (and process (process-live-p process))
           (if force
               (kill-process process)
-            ;; Send C-c to gracefully exit
-            (with-current-buffer buffer
-              (vterm-send-key "C-c")))))
+            ;; Graceful exit: SIGINT for headless, C-c for vterm
+            (if (magnus-process--headless-p instance)
+                (interrupt-process process)
+              (with-current-buffer buffer
+                (vterm-send-key "C-c")))))))
       ;; Give process time to exit, then kill buffer
       (run-with-timer
        1 nil
        (lambda ()
          (when (buffer-live-p buffer)
-           (kill-buffer buffer))))))
+           (kill-buffer buffer)))))
   (magnus-instances-update instance :status 'stopped :buffer nil))
 
 (defun magnus-process-kill-and-remove (instance &optional force)
@@ -592,6 +607,166 @@ Replaces slashes, spaces, and tildes with hyphens."
                                :status (if (get-buffer-process buffer)
                                            'running
                                          'stopped)))))
+
+;;; Headless mode — fire-and-forget agents
+
+(defvar magnus-headless-allowed-tools)
+
+(defvar-local magnus-process--headless-instance nil
+  "The instance associated with this headless buffer.")
+
+(define-derived-mode magnus-process-headless-mode special-mode "Headless"
+  "Major mode for headless Claude Code output buffers."
+  :group 'magnus
+  (setq-local truncate-lines nil)
+  (setq-local word-wrap t))
+
+(let ((map magnus-process-headless-mode-map))
+  (define-key map (kbd "q") #'quit-window))
+
+(defun magnus-process--headless-p (instance)
+  "Return non-nil if INSTANCE is a headless (non-interactive) agent."
+  (when-let ((buffer (magnus-instance-buffer instance)))
+    (when (buffer-live-p buffer)
+      (with-current-buffer buffer
+        (eq major-mode 'magnus-process-headless-mode)))))
+
+(defun magnus-process-create-headless (prompt &optional directory name)
+  "Create a headless Claude Code instance with PROMPT.
+DIRECTORY is the working directory.  NAME is optional.
+Returns the new instance."
+  (interactive "sTask prompt: ")
+  (let* ((dir (or directory (magnus-process--get-directory)))
+         (instance-name (or name
+                            (concat "headless-"
+                                    (funcall magnus-instance-name-generator dir))))
+         (instance (magnus-instances-create dir instance-name)))
+    (magnus-instances-add instance)
+    (magnus-coord-register-agent dir instance)
+    (magnus-process--spawn-headless instance prompt)
+    instance))
+
+(defun magnus-process--spawn-headless (instance prompt)
+  "Spawn a headless Claude Code process for INSTANCE with PROMPT."
+  (let* ((name (magnus-instance-name instance))
+         (directory (magnus-instance-directory instance))
+         (buffer-name (format "*claude-headless:%s*" name))
+         (default-directory directory)
+         (full-prompt (magnus-process--headless-prompt instance prompt))
+         (args (magnus-process--headless-args full-prompt)))
+    (let ((buffer (get-buffer-create buffer-name)))
+      (with-current-buffer buffer
+        (magnus-process-headless-mode)
+        (setq magnus-process--headless-instance instance)
+        (let ((inhibit-read-only t))
+          (erase-buffer)
+          (insert (propertize (format "Headless agent: %s\n" name)
+                              'face 'font-lock-keyword-face))
+          (insert (propertize (format "Directory: %s\n" directory)
+                              'face 'font-lock-comment-face))
+          (insert (propertize (format "Prompt: %s\n\n" prompt)
+                              'face 'font-lock-comment-face))
+          (insert (propertize "--- Output ---\n\n"
+                              'face 'magnus-trace-separator))))
+      (magnus-instances-update instance :buffer buffer :status 'running)
+      (let ((partial-line ""))
+        (make-process
+         :name (format "claude-headless-%s" name)
+         :buffer buffer
+         :command (cons magnus-claude-executable args)
+         :connection-type 'pipe
+         :sentinel (magnus-process--headless-sentinel instance)
+         :filter (lambda (proc output)
+                   (setq partial-line
+                         (magnus-process--headless-filter-output
+                          instance proc output partial-line)))))
+      buffer)))
+
+(defun magnus-process--headless-prompt (instance prompt)
+  "Build the full headless prompt for INSTANCE wrapping user PROMPT."
+  (let ((name (magnus-instance-name instance)))
+    (format "You are agent '%s', managed by Magnus. Before starting, \
+read .magnus-coord.md to check what other agents are doing. \
+Update the Active Work table with your name and planned work. \
+Then execute this task:\n\n%s\n\n\
+When done, update .magnus-coord.md to mark your work as complete."
+            name prompt)))
+
+(defun magnus-process--headless-args (prompt)
+  "Build command-line arguments for a headless Claude process with PROMPT."
+  (list "--print" prompt
+        "--output-format" "stream-json"
+        "--allowedTools" magnus-headless-allowed-tools))
+
+(defun magnus-process--headless-sentinel (instance)
+  "Return a process sentinel for headless INSTANCE."
+  (lambda (proc event)
+    (let ((event-str (string-trim event)))
+      (cond
+       ((string= event-str "finished")
+        (magnus-instances-update instance :status 'finished)
+        (message "Magnus: headless agent '%s' completed"
+                 (magnus-instance-name instance)))
+       ((string-prefix-p "exited abnormally" event-str)
+        (magnus-instances-update instance :status 'errored)
+        (message "Magnus: headless agent '%s' failed: %s"
+                 (magnus-instance-name instance) event-str))
+       (t
+        (magnus-instances-update instance :status 'stopped)))
+      ;; Append status to buffer
+      (when-let ((buf (process-buffer proc)))
+        (when (buffer-live-p buf)
+          (with-current-buffer buf
+            (let ((inhibit-read-only t))
+              (goto-char (point-max))
+              (insert (propertize (format "\n--- Process %s ---\n" event-str)
+                                  'face 'magnus-trace-separator))))))
+      ;; Update coordination
+      (let ((dir (magnus-instance-directory instance))
+            (name (magnus-instance-name instance)))
+        (magnus-coord-add-log dir name
+                              (format "Headless task %s" event-str)))
+      ;; Refresh status buffer
+      (when (get-buffer magnus-buffer-name)
+        (magnus-status-refresh)))))
+
+(defun magnus-process--headless-filter-output (instance proc output partial)
+  "Process stream-json OUTPUT from PROC for headless INSTANCE.
+PARTIAL is the incomplete line from previous call.  Returns new partial."
+  (let* ((combined (concat partial output))
+         (lines (split-string combined "\n"))
+         (remainder (car (last lines)))
+         (complete-lines (butlast lines)))
+    (dolist (line complete-lines)
+      (when (and (not (string-empty-p line))
+                 (string-prefix-p "{" (string-trim line)))
+        (condition-case nil
+            (let* ((json (json-parse-string (string-trim line) :object-type 'alist))
+                   (type (alist-get 'type json)))
+              (magnus-process--headless-handle-event instance proc json type))
+          (error nil))))
+    remainder))
+
+(defun magnus-process--headless-handle-event (instance proc json type)
+  "Handle a stream-json event of TYPE for headless INSTANCE from PROC."
+  (ignore instance)
+  (when-let ((buf (process-buffer proc)))
+    (when (buffer-live-p buf)
+      (with-current-buffer buf
+        (let ((inhibit-read-only t))
+          (goto-char (point-max))
+          (pcase type
+            ("assistant"
+             (when-let ((content (alist-get 'content (alist-get 'message json))))
+               (when (vectorp content)
+                 (seq-doseq (block content)
+                   (when (string= (alist-get 'type block) "text")
+                     (insert (alist-get 'text block)))))))
+            ("result"
+             (insert (propertize "\n--- Task Complete ---\n"
+                                 'face 'magnus-trace-separator))
+             (when-let ((cost (alist-get 'cost_usd json)))
+               (insert (format "Cost: $%.4f\n" cost))))))))))
 
 (provide 'magnus-process)
 ;;; magnus-process.el ends here

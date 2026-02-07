@@ -55,6 +55,8 @@
 (declare-function magnus-coord-start-reminders "magnus-coord")
 (declare-function magnus-status "magnus-status")
 (declare-function magnus-process-create "magnus-process")
+(declare-function magnus-process-create-headless "magnus-process")
+(declare-function magnus-health-start "magnus-health")
 
 ;;; Customization
 
@@ -79,6 +81,13 @@ If nil, uses the current project root or `default-directory'."
   (expand-file-name "magnus-state.el" user-emacs-directory)
   "File to persist instance state across Emacs sessions."
   :type 'file
+  :group 'magnus)
+
+(defcustom magnus-headless-allowed-tools "Read Write Edit Glob Grep Bash"
+  "Space-separated list of tools allowed in headless mode.
+Since headless agents cannot ask for permission interactively,
+only tools listed here will be available."
+  :type 'string
   :group 'magnus)
 
 (defcustom magnus-buffer-name "*magnus*"
@@ -131,9 +140,11 @@ DIRECTORY is ignored but accepted for API consistency."
     (require 'magnus-context)
     (require 'magnus-coord)
     (require 'magnus-attention)
+    (require 'magnus-health)
     (magnus-persistence-load)
     (magnus-attention-start)
     (magnus-coord-start-reminders)
+    (magnus-health-start)
     (setq magnus--initialized t)))
 
 ;;;###autoload
@@ -151,6 +162,16 @@ NAME is the instance name.  If nil, auto-generates one."
   (interactive)
   (magnus--ensure-initialized)
   (magnus-process-create directory name))
+
+;;;###autoload
+(defun magnus-create-headless (prompt &optional directory name)
+  "Create a headless Claude Code instance with PROMPT.
+DIRECTORY is the working directory.  If nil, prompts for one.
+NAME is the instance name.  If nil, auto-generates one.
+The agent runs to completion and exits."
+  (interactive "sTask prompt: ")
+  (magnus--ensure-initialized)
+  (magnus-process-create-headless prompt directory name))
 
 (provide 'magnus)
 ;;; magnus.el ends here

@@ -38,6 +38,11 @@
   :type 'boolean
   :group 'magnus)
 
+(defcustom magnus-coord-skill-file ".claude/skills/coordinate/SKILL.md"
+  "Path to the coordination skill file (relative to project)."
+  :type 'string
+  :group 'magnus)
+
 (defcustom magnus-coord-reminder-interval 600
   "Seconds between coordination file reminders to agents.
 Set to nil to disable.  Default is 600 (10 minutes)."
@@ -329,6 +334,62 @@ This prevents multiple agents from asking for input simultaneously.
 Remember: Check the coordination file periodically, especially before major changes.
 " magnus-coord-file magnus-coord-file))
 
+;;; Coordination skill
+
+(defun magnus-coord-skill-path (directory)
+  "Get the coordination skill file path for DIRECTORY."
+  (expand-file-name magnus-coord-skill-file directory))
+
+(defun magnus-coord-ensure-skill (directory)
+  "Ensure the coordinate skill file exists in DIRECTORY."
+  (let ((file (magnus-coord-skill-path directory)))
+    (unless (file-exists-p file)
+      (magnus-coord--create-skill file))
+    file))
+
+(defun magnus-coord--create-skill (file)
+  "Create the coordination skill FILE."
+  (let ((dir (file-name-directory file)))
+    (unless (file-exists-p dir)
+      (make-directory dir t)))
+  (with-temp-file file
+    (insert (magnus-coord--skill-content))))
+
+(defun magnus-coord--skill-content ()
+  "Generate the coordination skill content."
+  (format "# Coordination Check-in
+
+When you run /coordinate, perform these steps in order:
+
+## Steps
+
+1. **Read the coordination file**: Open and read `%s` completely.
+2. **Review active work**: Check the Active Work table. Note which agents are working on what files.
+3. **Identify conflicts**: Compare your planned work against the table. Flag any file overlaps.
+4. **Announce your claims**: Update the Active Work table with your row:
+   - Your agent name
+   - The area you are working on
+   - Status: `in-progress`
+   - Files you will touch (comma-separated)
+5. **Log your check-in**: Append a message to the Log section:
+   ```
+   [HH:MM] your-name: Checked in. Working on <area>. Files: <list>.
+   ```
+6. **Resolve conflicts**: If you found conflicts in step 3, @mention the conflicting agent in the Log section and wait for acknowledgment before proceeding.
+
+## After Completing a Task
+
+1. Update your Active Work row: change status to `done` or remove it.
+2. Log completion: `[HH:MM] your-name: Completed <task>. Files released: <list>.`
+3. If you made architectural decisions, add them to the Decisions section.
+
+## Important
+
+- Always use the current time (HH:MM format) in log entries.
+- Never modify another agent's Active Work row.
+- If you are blocked by another agent, @mention them — they will be notified automatically.
+" magnus-coord-file))
+
 ;;; Parsing coordination file
 
 (defun magnus-coord-parse (directory)
@@ -517,6 +578,7 @@ with stale statuses like done, died, finished, completed, stopped."
   (let ((name (magnus-instance-name instance)))
     (magnus-coord-ensure-file directory)
     (magnus-coord-ensure-instructions directory)
+    (magnus-coord-ensure-skill directory)
     (magnus-coord-add-log directory name "Joined the session")
     ;; Start watching for @mentions if not already
     (unless (assoc directory magnus-coord--watchers)
