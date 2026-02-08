@@ -85,6 +85,30 @@ Common safe operations (file reads, edits, grep, tests) can be auto-approved so 
 
 Built-in allowlist includes: `Read`, `Write`, `Edit`, `Glob`, `Grep`, safe Bash commands (`git`, `ls`, `npm test`, `cargo build`, `pytest`, etc.). Customize via `magnus-attention-auto-approve-patterns`. Set to `nil` to disable.
 
+### Health Monitoring
+Magnus tracks agent health by hashing buffer content every 30 seconds. Status indicators appear next to each instance in the status buffer:
+
+- `+` (green) — active, buffer is changing
+- `~` (yellow) — stale, no buffer changes for 2+ minutes
+- `!` (red) — stuck, stale for 3+ consecutive checks
+- `x` — dead, no buffer or process
+
+Toggle health monitoring with `H` in the transient menu. Customize thresholds via `magnus-health-check-interval`, `magnus-health-stale-threshold`, and `magnus-health-stuck-threshold`.
+
+### Headless Mode
+Fire-and-forget agents that run as background processes instead of vterm buffers. Ideal for self-contained tasks where you don't need interactive input.
+
+```
+M-x magnus-create-headless RET "List all .el files and summarize them" RET
+```
+
+Or press `h` in the create dispatch menu (`c` then `h`). Headless agents:
+- Run via `claude --print` with stream-json output
+- Show output in a read-only buffer
+- Cannot receive messages or need permission prompts
+- Show as `[finished]` or `[errored]` in the status buffer when done
+- Are automatically skipped by the attention queue
+
 ### Persistence
 Everything persists across Emacs sessions:
 - Running instances (reconnects if still alive)
@@ -170,6 +194,7 @@ Or in your config:
 | `C`   | Open coordination file     |
 | `a`   | Next in attention queue    |
 | `A`   | Show attention queue       |
+| `H`   | Toggle health monitoring   |
 | `P`   | Purge all instances        |
 | `n/p` | Navigate instances         |
 | `g`   | Refresh                    |
@@ -208,12 +233,13 @@ Press `?` in the status buffer to see all commands organized by category:
 | `C` | Open coordination file   |
 | `I` | Open agent instructions  |
 
-**Attention (permission requests)**
+**Attention & Health**
 | Key | Action                      |
 |-----|-----------------------------|
 | `a` | Next in attention queue     |
 | `A` | Show attention queue        |
 | `T` | Toggle attention monitoring |
+| `H` | Toggle health monitoring    |
 
 **Navigation**
 | Key   | Action          |
@@ -246,20 +272,23 @@ When you create an instance, magnus:
 
 1. Creates `.magnus-coord.md` in the project root
 2. Creates `.claude/magnus-instructions.md` with the coordination protocol
-3. Logs "Joined the session" in the coordination file
+3. Creates `.claude/skills/coordinate/SKILL.md` with check-in steps
+4. Logs "Joined the session" in the coordination file
+5. Sends a mandatory onboarding checklist to the agent
 
-The instructions tell agents to:
-- Check the coordination file before starting work
-- Announce what files they'll touch
-- Communicate with `@mentions` for other agents
-- Announce `[ATTENTION]` before requesting user input
-- Log when they finish so others can proceed
+Agents must complete a numbered checklist before writing any code:
+1. Read the instructions file
+2. Read the coordination file and check the Active Work table
+3. Announce planned work and files in the Log section
+4. Check for conflicts with other agents
+5. Add their row to the Active Work table
+6. Only then begin coding
 
 ### Automatic @mention Notifications
 
 When an agent writes `@swift-fox` in the coordination file, swift-fox automatically receives a notification with the message context. This enables real-time communication between agents without requiring them to poll the file.
 
-New instances also receive an onboarding message that introduces them to the Magnus environment, their agent name, and the coordination protocol.
+The coordination skill file (`.claude/skills/coordinate/SKILL.md`) reinforces the protocol by teaching agents structured check-in steps they can follow independently.
 
 This is advisory coordination — agents are instructed to follow the protocol, and Claude is good at it.
 
@@ -307,6 +336,18 @@ Magnus avoids triggering interactive Helm/Projectile prompts when creating insta
 ;; Coordination reminder interval in seconds (default: 600 / 10 min)
 (setq magnus-coord-reminder-interval 300)  ;; 5 minutes
 (setq magnus-coord-reminder-interval nil)  ;; disable reminders
+
+;; Health monitoring check interval in seconds (default: 30)
+(setq magnus-health-check-interval 30)
+
+;; Time before an agent is considered stale (default: 120s)
+(setq magnus-health-stale-threshold 120)
+
+;; Consecutive stale checks before "stuck" (default: 3)
+(setq magnus-health-stuck-threshold 3)
+
+;; Tools allowed in headless mode (default: "Read Write Edit Glob Grep Bash")
+(setq magnus-headless-allowed-tools "Read Write Edit Glob Grep Bash")
 ```
 
 ## Architecture
@@ -316,12 +357,13 @@ magnus/
 ├── magnus.el              # Entry point, customization
 ├── magnus-instances.el    # Instance data structure and registry
 ├── magnus-persistence.el  # Save/restore state across sessions
-├── magnus-process.el      # vterm process management
+├── magnus-process.el      # Process management (vterm + headless)
 ├── magnus-status.el       # Status buffer UI
 ├── magnus-transient.el    # Transient popup menus
 ├── magnus-context.el      # Shared context buffer + URL fetching
 ├── magnus-coord.el        # Agent coordination protocol
-└── magnus-attention.el    # Permission request queue
+├── magnus-attention.el    # Permission request queue
+└── magnus-health.el       # Agent health monitoring
 ```
 
 ## License
