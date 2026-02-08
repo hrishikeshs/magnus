@@ -6,14 +6,14 @@ Run multiple AI agents in parallel, let them communicate to avoid conflicts, and
 
 ## Screenshots
 
+**Agents coordinating via shared task list:**
+![Coordination in action](screenshots/user-action.png)
+
 **Two agents working side by side:**
 ![Multiple Claude instances](screenshots/multiple-claude-instances.png)
 
-**Agents coordinating via shared task list:**
-![Coordination in action](screenshots/diff-view.png)
-
-**Permission request with attention queue:**
-![User action needed](screenshots/user-action.png)
+**Coordination diff view:**
+![Diff view](screenshots/diff-view.png)
 
 ## Why Magnus?
 
