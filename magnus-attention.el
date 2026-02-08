@@ -20,6 +20,7 @@
 
 (declare-function vterm-send-string "vterm")
 (declare-function vterm-send-return "vterm")
+(declare-function magnus-process--headless-p "magnus-process")
 
 ;;; Customization
 
@@ -168,7 +169,8 @@ Tries auto-approval first; falls back to the attention queue."
     (unwind-protect
         (condition-case nil
             (dolist (instance (magnus-instances-list))
-              (when (magnus-attention--needs-input-p instance)
+              (when (and (magnus-attention--needs-input-p instance)
+                         (not (magnus-process--headless-p instance)))
                 (unless (magnus-attention--try-auto-approve instance)
                   (magnus-attention-request instance))))
           (error nil))  ; Silently ignore errors

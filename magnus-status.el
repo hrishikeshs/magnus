@@ -15,6 +15,7 @@
 (require 'magnus-process)
 (require 'magnus-coord)
 (require 'magnus-attention)
+(require 'magnus-health)
 
 (declare-function magnus-dispatch "magnus-transient")
 (declare-function magnus-context "magnus-context")
@@ -58,6 +59,16 @@
 (defface magnus-empty-hint
   '((t :inherit font-lock-comment-face :slant italic))
   "Face for empty state hints."
+  :group 'magnus)
+
+(defface magnus-status-finished
+  '((t :inherit success :slant italic))
+  "Face for finished status (headless completed)."
+  :group 'magnus)
+
+(defface magnus-status-errored
+  '((t :inherit error :slant italic))
+  "Face for errored status (headless failed)."
   :group 'magnus)
 
 ;;; Mode definition
@@ -169,19 +180,30 @@ Also reconciles coordination files, removing stale entries."
   "Insert a line for INSTANCE."
   (let* ((name (magnus-instance-name instance))
          (directory (magnus-instance-directory instance))
-         (suspended (magnus-process-suspended-p instance))
-         (running (magnus-process-running-p instance))
+         (status (magnus-instance-status instance))
+         (suspended (eq status 'suspended))
+         (finished (eq status 'finished))
+         (errored (eq status 'errored))
+         (running (or (eq status 'running)
+                      (magnus-process-running-p instance)))
          (status-str (cond (suspended "suspended")
+                           (finished "finished")
+                           (errored "errored")
                            (running "running")
                            (t "stopped")))
          (status-face (cond (suspended 'magnus-status-suspended)
+                            (finished 'magnus-status-finished)
+                            (errored 'magnus-status-errored)
                             (running 'magnus-status-running)
                             (t 'magnus-status-stopped)))
+         (health-ind (magnus-health-indicator instance))
          (age (magnus-status--format-age (magnus-instance-created-at instance))))
     (insert "  ")
     (insert (propertize name 'face 'magnus-instance-name))
     (insert " ")
     (insert (propertize (format "[%s]" status-str) 'face status-face))
+    (insert " ")
+    (insert health-ind)
     (insert " ")
     (insert (propertize age 'face 'magnus-instance-directory))
     (insert "\n")

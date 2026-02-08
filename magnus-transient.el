@@ -21,6 +21,8 @@
 (declare-function magnus-context-copy-for-agent "magnus-context")
 (declare-function magnus-coord-open "magnus-coord")
 (declare-function magnus-coord-open-instructions "magnus-coord")
+(declare-function magnus-health-toggle "magnus-health")
+(declare-function magnus-process-create-headless "magnus-process")
 
 ;;; Main dispatch
 
@@ -49,7 +51,8 @@
   ["Attention (permission requests)"
    ("a" "Next in attention queue" magnus-attention-next)
    ("A" "Show attention queue" magnus-attention-show-queue)
-   ("T" "Toggle attention monitoring" magnus-attention-toggle)]
+   ("T" "Toggle attention monitoring" magnus-attention-toggle)
+   ("H" "Toggle health monitoring" magnus-health-toggle)]
   ["Navigation"
    ("RET" "Visit instance" magnus-status-visit)
    ("n" "Next instance" magnus-status-next)
@@ -65,7 +68,8 @@
   ["Create Instance"
    ("c" "In current directory" magnus-create-current-dir)
    ("d" "Choose directory" magnus-create-choose-dir)
-   ("p" "In project root" magnus-create-project-root)])
+   ("p" "In project root" magnus-create-project-root)
+   ("h" "Headless (fire-and-forget)" magnus-create-headless-interactive)])
 
 (defun magnus-create-current-dir ()
   "Create instance in current directory."
@@ -89,6 +93,19 @@
           (magnus-process-create root)
           (magnus-status-refresh))
       (user-error "Not in a project"))))
+
+(defun magnus-create-headless-interactive ()
+  "Create a headless (fire-and-forget) Claude Code instance.
+Prompts for a task description, uses directory from instance at point
+or `default-directory'."
+  (interactive)
+  (let* ((prompt (read-string "Task prompt: "))
+         (dir (if-let ((instance (ignore-errors
+                                   (magnus-status--get-instance-at-point))))
+                  (magnus-instance-directory instance)
+                default-directory)))
+    (magnus-process-create-headless prompt dir)
+    (magnus-status-refresh)))
 
 (defun magnus--project-root ()
   "Get the current project root.
