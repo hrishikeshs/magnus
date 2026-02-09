@@ -209,8 +209,9 @@ Tries auto-approval first; falls back to the attention queue."
 
 (defvar magnus-attention--prompt-anchors
   '("\\[y/n\\]" "\\[Y/n\\]" "\\[yes/no\\]" "(y/n)" "(Y/n)" "Allow\\?" "Proceed\\?")
-  "Patterns that must appear on the last line to confirm it is a real yes/no prompt.
-Auto-approve only fires when the last line matches one of these AND an allowlist entry.")
+  "Patterns confirming a real yes/no prompt on the last line.
+Auto-approve only fires when the last line matches one of these
+AND an allowlist entry.")
 
 (defun magnus-attention--try-auto-approve (instance)
   "Try to auto-approve INSTANCE's permission prompt.

@@ -92,6 +92,11 @@ Set to nil to disable.  Default is 600 (10 minutes)."
        (format "Reminder: you are '%s'. Check .magnus-coord.md for messages from other agents and update your status there."
                (magnus-instance-name instance))))))
 
+;;; @mention watching
+
+(defvar magnus-coord--watchers nil
+  "Alist of (directory . watch-descriptor) for coordination file watchers.")
+
 (defun magnus-coord-ensure-watchers ()
   "Start file watchers for all directories with active instances.
 Call this on startup to ensure @mention detection works for
@@ -102,11 +107,6 @@ instances restored from persistence."
       (when (file-exists-p (magnus-coord-file-path dir))
         (unless (assoc dir magnus-coord--watchers)
           (magnus-coord-start-watching dir))))))
-
-;;; @mention watching
-
-(defvar magnus-coord--watchers nil
-  "Alist of (directory . watch-descriptor) for coordination file watchers.")
 
 (defvar magnus-coord--last-content nil
   "Alist of (directory . content-hash) to track changes.")
