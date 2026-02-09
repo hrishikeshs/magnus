@@ -85,6 +85,13 @@
         (erase-buffer))
       (magnus-trace-refresh))
     (magnus-trace--ensure-timer)
+    ;; Close any existing trace window before displaying the new one,
+    ;; so the side window is freshly created with the correct buffer.
+    (dolist (win (window-list))
+      (when (and (window-live-p win)
+                 (string-prefix-p "*trace:" (buffer-name (window-buffer win)))
+                 (not (eq (window-buffer win) trace-buf)))
+        (delete-window win)))
     (display-buffer trace-buf '(display-buffer-in-side-window
                                 (side . bottom)
                                 (window-height . 0.35)))
@@ -136,15 +143,21 @@
          (new-lines (nthcdr magnus-trace--last-line-count all-lines))
          (at-end (>= (point) (point-max))))
     (when new-lines
-      (let ((inhibit-read-only t))
+      (let ((inhibit-read-only t)
+            (parsed-count 0))
         (save-excursion
           (goto-char (point-max))
-          (dolist (line new-lines)
-            (condition-case nil
-                (let ((entry (json-parse-string line :object-type 'alist)))
-                  (magnus-trace--render-entry entry))
-              (error nil)))))
-      (setq magnus-trace--last-line-count (length all-lines))
+          (catch 'partial-line
+            (dolist (line new-lines)
+              (condition-case nil
+                  (let ((entry (json-parse-string line :object-type 'alist)))
+                    (magnus-trace--render-entry entry)
+                    (setq parsed-count (1+ parsed-count)))
+                ;; Stop at first unparseable line (likely half-written).
+                ;; We'll retry it on the next refresh.
+                (error (throw 'partial-line nil))))))
+        (setq magnus-trace--last-line-count
+              (+ magnus-trace--last-line-count parsed-count)))
       ;; Follow tail if user was at end
       (when at-end
         (goto-char (point-max))
