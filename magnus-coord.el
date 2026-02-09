@@ -2,6 +2,9 @@
 
 ;; Copyright (C) 2026 Hrishikesh S
 ;; Author: Hrishikesh S <hrish2006@gmail.com>
+;; Version: 0.1.0
+;; Package-Requires: ((emacs "28.1"))
+;; URL: https://github.com/hrishikeshs/magnus
 ;; SPDX-License-Identifier: MIT
 
 ;;; Commentary:
@@ -618,15 +621,15 @@ with stale statuses like done, died, finished, completed, stopped."
         (mapconcat
          (lambda (entry)
            (format "  %s: %s [%s]"
-                   (propertize (plist-get entry :agent) 'face 'magnus-instance-name)
+                   (propertize (plist-get entry :agent) 'face 'magnus-status-instance-name)
                    (plist-get entry :area)
                    (propertize (plist-get entry :status)
                               'face (if (string= (plist-get entry :status) "in-progress")
                                        'magnus-status-running
-                                     'magnus-instance-directory))))
+                                     'magnus-status-instance-dir))))
          active
          "\n")
-      (propertize "  No active work" 'face 'magnus-empty-hint))))
+      (propertize "  No active work" 'face 'magnus-status-empty-hint))))
 
 (defun magnus-coord-format-log (parsed &optional limit)
   "Format the :log entries from PARSED for display.
@@ -637,12 +640,12 @@ Show at most LIMIT entries (default 5)."
         (mapconcat
          (lambda (entry)
            (format "  [%s] %s: %s"
-                   (propertize (plist-get entry :time) 'face 'magnus-instance-directory)
-                   (propertize (plist-get entry :agent) 'face 'magnus-instance-name)
+                   (propertize (plist-get entry :time) 'face 'magnus-status-instance-dir)
+                   (propertize (plist-get entry :agent) 'face 'magnus-status-instance-name)
                    (plist-get entry :message)))
          entries
          "\n")
-      (propertize "  No messages yet" 'face 'magnus-empty-hint))))
+      (propertize "  No messages yet" 'face 'magnus-status-empty-hint))))
 
 ;;; Interactive commands
 

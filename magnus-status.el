@@ -2,6 +2,9 @@
 
 ;; Copyright (C) 2026 Hrishikesh S
 ;; Author: Hrishikesh S <hrish2006@gmail.com>
+;; Version: 0.1.0
+;; Package-Requires: ((emacs "28.1"))
+;; URL: https://github.com/hrishikeshs/magnus
 ;; SPDX-License-Identifier: MIT
 
 ;;; Commentary:
@@ -26,12 +29,12 @@
 
 ;;; Faces
 
-(defface magnus-instance-name
+(defface magnus-status-instance-name
   '((t :inherit font-lock-function-name-face :weight bold))
   "Face for instance names."
   :group 'magnus)
 
-(defface magnus-instance-directory
+(defface magnus-status-instance-dir
   '((t :inherit font-lock-comment-face))
   "Face for instance directories."
   :group 'magnus)
@@ -51,12 +54,12 @@
   "Face for suspended status."
   :group 'magnus)
 
-(defface magnus-section-heading
+(defface magnus-status-section-heading
   '((t :inherit font-lock-keyword-face :weight bold))
   "Face for section headings."
   :group 'magnus)
 
-(defface magnus-empty-hint
+(defface magnus-status-empty-hint
   '((t :inherit font-lock-comment-face :slant italic))
   "Face for empty state hints."
   :group 'magnus)
@@ -152,7 +155,7 @@ Also reconciles coordination files, removing stale entries."
 
 (defun magnus-status--insert-header ()
   "Insert the status buffer header."
-  (insert (propertize "Magnus" 'face 'magnus-section-heading))
+  (insert (propertize "Magnus" 'face 'magnus-status-section-heading))
   (insert " - Claude Code Instance Manager\n")
   (insert (format "Instances: %d" (magnus-instances-count)))
   (let ((attention-count (magnus-attention-pending-count)))
@@ -166,15 +169,15 @@ Also reconciles coordination files, removing stale entries."
   (let ((instances (magnus-instances-list)))
     (if (null instances)
         (magnus-status--insert-empty-state)
-      (insert (propertize "Instances\n" 'face 'magnus-section-heading))
+      (insert (propertize "Instances\n" 'face 'magnus-status-section-heading))
       (dolist (instance instances)
         (magnus-status--insert-instance instance)))))
 
 (defun magnus-status--insert-empty-state ()
   "Insert the empty state message."
   (insert "\n")
-  (insert (propertize "  No Claude Code instances.\n" 'face 'magnus-empty-hint))
-  (insert (propertize "  Press 'c' to create one.\n" 'face 'magnus-empty-hint)))
+  (insert (propertize "  No Claude Code instances.\n" 'face 'magnus-status-empty-hint))
+  (insert (propertize "  Press 'c' to create one.\n" 'face 'magnus-status-empty-hint)))
 
 (defun magnus-status--insert-instance (instance)
   "Insert a line for INSTANCE."
@@ -199,16 +202,16 @@ Also reconciles coordination files, removing stale entries."
          (health-ind (magnus-health-indicator instance))
          (age (magnus-status--format-age (magnus-instance-created-at instance))))
     (insert "  ")
-    (insert (propertize name 'face 'magnus-instance-name))
+    (insert (propertize name 'face 'magnus-status-instance-name))
     (insert " ")
     (insert (propertize (format "[%s]" status-str) 'face status-face))
     (insert " ")
     (insert health-ind)
     (insert " ")
-    (insert (propertize age 'face 'magnus-instance-directory))
+    (insert (propertize age 'face 'magnus-status-instance-dir))
     (insert "\n")
     (insert "    ")
-    (insert (propertize (abbreviate-file-name directory) 'face 'magnus-instance-directory))
+    (insert (propertize (abbreviate-file-name directory) 'face 'magnus-status-instance-dir))
     (insert "\n")
     ;; Store instance ID as text property for commands
     (put-text-property (line-beginning-position -1) (point)
@@ -233,7 +236,7 @@ Also reconciles coordination files, removing stale entries."
   (let ((directories (magnus-status--get-project-directories)))
     (when directories
       (insert "\n")
-      (insert (propertize "Coordination\n" 'face 'magnus-section-heading))
+      (insert (propertize "Coordination\n" 'face 'magnus-status-section-heading))
       (dolist (dir directories)
         (magnus-status--insert-coordination-for-dir dir)))))
 
@@ -252,7 +255,7 @@ Also reconciles coordination files, removing stale entries."
         ;; Show directory
         (insert "  ")
         (insert (propertize (abbreviate-file-name directory)
-                           'face 'magnus-instance-directory))
+                           'face 'magnus-status-instance-dir))
         (insert "\n")
         ;; Show active work
         (when active
@@ -260,13 +263,13 @@ Also reconciles coordination files, removing stale entries."
           (dolist (entry active)
             (insert (format "    %s: %s [%s]\n"
                            (propertize (plist-get entry :agent)
-                                      'face 'magnus-instance-name)
+                                      'face 'magnus-status-instance-name)
                            (plist-get entry :area)
                            (propertize (plist-get entry :status)
                                       'face (if (string= (plist-get entry :status)
                                                         "in-progress")
                                                'magnus-status-running
-                                             'magnus-instance-directory))))))
+                                             'magnus-status-instance-dir))))))
         ;; Show recent log (last 3 entries)
         (when log
           (insert (propertize "  Recent:\n" 'face 'font-lock-comment-face))
@@ -274,9 +277,9 @@ Also reconciles coordination files, removing stale entries."
             (dolist (entry (reverse recent))
               (insert (format "    [%s] %s: %s\n"
                              (propertize (plist-get entry :time)
-                                        'face 'magnus-instance-directory)
+                                        'face 'magnus-status-instance-dir)
                              (propertize (plist-get entry :agent)
-                                        'face 'magnus-instance-name)
+                                        'face 'magnus-status-instance-name)
                              (plist-get entry :message))))))
         (insert "\n")))))
 

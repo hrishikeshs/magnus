@@ -358,6 +358,7 @@ magnus/
 ├── magnus-instances.el    # Instance data structure and registry
 ├── magnus-persistence.el  # Save/restore state across sessions
 ├── magnus-process.el      # Process management (vterm + headless)
+├── magnus-trace.el        # Thinking trace JSONL viewer
 ├── magnus-status.el       # Status buffer UI
 ├── magnus-transient.el    # Transient popup menus
 ├── magnus-context.el      # Shared context buffer + URL fetching

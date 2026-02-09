@@ -2,6 +2,9 @@
 
 ;; Copyright (C) 2026 Hrishikesh S
 ;; Author: Hrishikesh S <hrish2006@gmail.com>
+;; Version: 0.1.0
+;; Package-Requires: ((emacs "28.1"))
+;; URL: https://github.com/hrishikeshs/magnus
 ;; SPDX-License-Identifier: MIT
 
 ;;; Commentary:
@@ -66,35 +69,35 @@
 (transient-define-prefix magnus-create-dispatch ()
   "Create a new Claude Code instance."
   ["Create Instance"
-   ("c" "In current directory" magnus-create-current-dir)
-   ("d" "Choose directory" magnus-create-choose-dir)
-   ("p" "In project root" magnus-create-project-root)
-   ("h" "Headless (fire-and-forget)" magnus-create-headless-interactive)])
+   ("c" "In current directory" magnus-transient-create-current-dir)
+   ("d" "Choose directory" magnus-transient-create-choose-dir)
+   ("p" "In project root" magnus-transient-create-project-root)
+   ("h" "Headless (fire-and-forget)" magnus-transient-create-headless)])
 
-(defun magnus-create-current-dir ()
+(defun magnus-transient-create-current-dir ()
   "Create instance in current directory."
   (interactive)
   (magnus-process-create default-directory)
   (magnus-status-refresh))
 
-(defun magnus-create-choose-dir ()
+(defun magnus-transient-create-choose-dir ()
   "Create instance in a chosen directory."
   (interactive)
   (let ((dir (read-directory-name "Directory: " nil nil t)))
     (magnus-process-create dir)
     (magnus-status-refresh)))
 
-(defun magnus-create-project-root ()
+(defun magnus-transient-create-project-root ()
   "Create instance in the current project root."
   (interactive)
-  (let ((root (magnus--project-root)))
+  (let ((root (magnus-transient--project-root)))
     (if root
         (progn
           (magnus-process-create root)
           (magnus-status-refresh))
       (user-error "Not in a project"))))
 
-(defun magnus-create-headless-interactive ()
+(defun magnus-transient-create-headless ()
   "Create a headless (fire-and-forget) Claude Code instance.
 Prompts for a task description, uses directory from instance at point
 or `default-directory'."
@@ -107,7 +110,7 @@ or `default-directory'."
     (magnus-process-create-headless prompt dir)
     (magnus-status-refresh)))
 
-(defun magnus--project-root ()
+(defun magnus-transient--project-root ()
   "Get the current project root.
 Avoids triggering interactive prompts from Projectile."
   (or
