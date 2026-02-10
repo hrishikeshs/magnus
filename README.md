@@ -44,6 +44,10 @@ Agents communicate through a shared `.magnus-coord.md` file:
 | swift-fox | auth module | in-progress | src/auth.ts, src/session.ts |
 | keen-owl | api tests | in-progress | tests/api/*.test.ts |
 
+## Discoveries
+- The user API returns 404 (not 403) for deleted users — handle both (swift-fox)
+- Test fixtures in tests/helpers/ are shared, don't modify without checking (keen-owl)
+
 ## Log
 [10:30] swift-fox: Starting work on auth. Will touch src/auth/*.ts
 [10:31] keen-owl: Got it, I'll avoid those files. Working on API tests.
@@ -55,6 +59,18 @@ Agents communicate through a shared `.magnus-coord.md` file:
 ```
 
 Agents are automatically instructed to check and update this file, preventing them from stepping on each other's work.
+
+#### Knowledge Sharing
+
+Agents share discoveries — API quirks, gotchas, patterns — in the **Discoveries** section of the coordination file. Other agents read these on check-in and when reminded, so insights propagate naturally without you having to relay information between agents.
+
+Agents are also nudged to write detailed commit messages capturing what they learned, so knowledge persists in git history even after the coordination file is cleaned up.
+
+#### Automatic Housekeeping
+
+The coordination file stays lean automatically:
+- **Log** is trimmed to the last 25 entries on each reminder cycle (configurable via `magnus-coord-log-max-entries`)
+- **Discoveries** and **Decisions** are cleared when the last agent leaves a project, keeping the file fresh for the next work session
 
 ### Shared Context Buffer
 A per-project scratch buffer where you can paste notes, links, Confluence pages, Jira tickets, or any context you want all agents to access.
@@ -69,7 +85,7 @@ Press `t` on any instance to open a trace buffer that reads the session JSONL fi
 The trace auto-refreshes every 2 seconds so you can watch agents think in real-time.
 
 ### Direct Messaging
-Press `m` to send a message directly to an agent from the status buffer. The message appears in the agent's terminal as if you typed it — Claude acts on it immediately. Agents also receive periodic reminders (every 10 min) to check the coordination file.
+Press `m` to send a message directly to an agent from the status buffer. The message appears in the agent's terminal as if you typed it — Claude acts on it immediately. Agents also receive periodic reminders (every 10 min) that rotate through different messages — nudging them to check the coordination file, share discoveries, and update their status.
 
 ### Attention Queue
 When agents need user input (permission prompts, confirmations), they join a queue:
@@ -274,9 +290,9 @@ When you create an instance, magnus:
 2. Creates `.claude/magnus-instructions.md` with the coordination protocol
 3. Creates `.claude/skills/coordinate/SKILL.md` with check-in steps
 4. Logs "Joined the session" in the coordination file
-5. Sends a mandatory onboarding checklist to the agent
+5. Sends a welcome message with an onboarding checklist to the agent
 
-Agents must complete a numbered checklist before writing any code:
+Agents go through a checklist before writing any code:
 1. Read the instructions file
 2. Read the coordination file and check the Active Work table
 3. Announce planned work and files in the Log section
@@ -336,6 +352,9 @@ Magnus avoids triggering interactive Helm/Projectile prompts when creating insta
 ;; Coordination reminder interval in seconds (default: 600 / 10 min)
 (setq magnus-coord-reminder-interval 300)  ;; 5 minutes
 (setq magnus-coord-reminder-interval nil)  ;; disable reminders
+
+;; Max log entries before trimming (default: 25, nil to disable)
+(setq magnus-coord-log-max-entries 50)
 
 ;; Health monitoring check interval in seconds (default: 30)
 (setq magnus-health-check-interval 30)
