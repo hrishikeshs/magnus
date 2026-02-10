@@ -103,23 +103,24 @@ Avoids triggering interactive prompts from Projectile."
 (defun magnus-process--onboarding-message (instance)
   "Generate onboarding message for INSTANCE."
   (let ((name (magnus-instance-name instance)))
-    (format "MANDATORY COORDINATION PROTOCOL — You are agent '%s', managed by Magnus.
+    (format "Welcome! You are agent '%s', part of a multi-agent team managed by Magnus (an Emacs coordination tool). Other agents may be working in this project right now.
 
-You MUST complete these steps IN ORDER before writing any code:
+Before you start coding, please go through these steps — they keep everyone in sync:
 
-1. Read .claude/magnus-instructions.md completely — it defines how agents coordinate.
-2. Read .magnus-coord.md — check the Active Work table for what other agents are doing.
-3. In the Log section of .magnus-coord.md, announce what you plan to work on and which files you will touch.
-4. Check the Active Work table for conflicts — if another agent claims files you need, post an @mention asking them to coordinate.
+1. Read .claude/magnus-instructions.md — it explains how agents coordinate here.
+2. Read .magnus-coord.md — check the Active Work table to see what others are doing, and the Discoveries section for things they've learned.
+3. In the Log section of .magnus-coord.md, announce what you plan to work on and which files you'll touch.
+4. Check the Active Work table for conflicts — if another agent claims files you need, @mention them to coordinate.
 5. Add your row to the Active Work table with your name, area, status 'in-progress', and files.
-6. ONLY THEN begin coding.
+6. Then begin coding.
 
 While working:
 - Update .magnus-coord.md when you finish tasks or change scope.
-- If you need another agent's attention, @mention them by name in the Log — they will be notified automatically.
-- Check .magnus-coord.md periodically for messages directed at you.
+- If you learn something non-obvious, add it to the Discoveries section — other agents will read it.
+- If you need another agent's attention, @mention them in the Log — they get notified automatically.
+- Check .magnus-coord.md periodically for messages and discoveries.
 
-Do NOT skip these steps. Begin now with step 1."
+Please start with step 1 now."
             name)))
 
 (defun magnus-process--list-sessions (directory)

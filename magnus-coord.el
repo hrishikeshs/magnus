@@ -83,14 +83,29 @@ Set to nil to disable.  Default is 600 (10 minutes)."
     (cancel-timer magnus-coord--reminder-timer)
     (setq magnus-coord--reminder-timer nil)))
 
+(defvar magnus-coord--reminder-templates
+  '("Hey %s — take a quick look at .magnus-coord.md. Any messages for you? Anything you've learned that other agents should know? Drop it in the Discoveries section."
+    "Coordination check, %s. Read .magnus-coord.md — has anyone posted something useful in Discoveries? If you've figured out something non-obvious, share it there."
+    "%s, heads up: peek at .magnus-coord.md. Other agents may have left insights in Discoveries that save you time. And if you've hit a gotcha or found a pattern, pay it forward."
+    "Quick sync, %s. Open .magnus-coord.md — update your status, check for messages, and if you've learned anything surprising about this codebase, add it to Discoveries.")
+  "Rotating reminder messages. %s is replaced with the agent name.")
+
+(defvar magnus-coord--reminder-index 0
+  "Index into the rotating reminder templates.")
+
 (defun magnus-coord--send-reminders ()
-  "Send a coordination reminder to all running instances."
-  (dolist (instance (magnus-instances-list))
-    (when (eq (magnus-instance-status instance) 'running)
-      (magnus-coord-send-message
-       instance
-       (format "Reminder: you are '%s'. Check .magnus-coord.md for messages from other agents and update your status there."
-               (magnus-instance-name instance))))))
+  "Send a coordination reminder to all running instances.
+Rotates through different messages to keep agents attentive."
+  (let ((template (nth (mod magnus-coord--reminder-index
+                            (length magnus-coord--reminder-templates))
+                       magnus-coord--reminder-templates)))
+    (dolist (instance (magnus-instances-list))
+      (when (eq (magnus-instance-status instance) 'running)
+        (magnus-coord-send-message
+         instance
+         (format template (magnus-instance-name instance)))))
+    (setq magnus-coord--reminder-index
+          (1+ magnus-coord--reminder-index))))
 
 ;;; @mention watching
 
@@ -265,7 +280,9 @@ Formats the message as a direct user instruction so Claude acts on it."
     (insert "<!-- Agents: Update this section when you start/finish work -->\n\n")
     (insert "| Agent | Area | Status | Files |\n")
     (insert "|-------|------|--------|-------|\n")
-    (insert "\n## Log\n\n")
+    (insert "\n## Discoveries\n\n")
+    (insert "<!-- Share things you learned that other agents should know -->\n\n")
+    (insert "## Log\n\n")
     (insert "<!-- Agents: Append messages here to communicate -->\n\n")
     (insert "## Decisions\n\n")
     (insert "<!-- Record agreed-upon decisions here -->\n\n")))
@@ -317,11 +334,19 @@ To talk to other agents, append to the Log section:
 **Note:** When you @mention another agent, they will automatically receive a
 notification with your message. You don't need to wait for them to check the file.
 
+## Sharing What You Learn
+
+As you work, you will discover things — API quirks, gotchas, patterns, or
+non-obvious behavior in the codebase. Add these to the **Discoveries** section
+of the coordination file. Other agents read this, and your insight might save
+them hours. Think of it as leaving breadcrumbs for your teammates.
+
 ## When You Finish
 
 1. Update your row in Active Work (status: done, or remove it)
 2. Log a message that you've finished
-3. If you made decisions that affect others, add to the Decisions section
+3. Add any non-obvious learnings to the Discoveries section
+4. If you made decisions that affect others, add to the Decisions section
 
 ## Conflict Resolution
 
@@ -395,13 +420,15 @@ When you run /coordinate, perform these steps in order:
 
 1. Update your Active Work row: change status to `done` or remove it.
 2. Log completion: `[HH:MM] your-name: Completed <task>. Files released: <list>.`
-3. If you made architectural decisions, add them to the Decisions section.
+3. **Debrief**: Add anything you learned to the Discoveries section — gotchas, patterns, API quirks, things that surprised you. Your teammates will thank you.
+4. If you made architectural decisions, add them to the Decisions section.
 
 ## Important
 
 - Always use the current time (HH:MM format) in log entries.
 - Never modify another agent's Active Work row.
 - If you are blocked by another agent, @mention them — they will be notified automatically.
+- Read the Discoveries section when you check in — other agents may have learned something that helps you.
 " magnus-coord-file))
 
 ;;; Parsing coordination file
