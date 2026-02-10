@@ -53,6 +53,13 @@ Set to nil to disable.  Default is 600 (10 minutes)."
                  (const :tag "Disabled" nil))
   :group 'magnus)
 
+(defcustom magnus-coord-log-max-entries 25
+  "Maximum number of log entries to keep in the coordination file.
+Older entries are trimmed automatically.  Set to nil to disable."
+  :type '(choice (integer :tag "Entries")
+                 (const :tag "Unlimited" nil))
+  :group 'magnus)
+
 ;;; Sending messages to agents
 
 (defun magnus-coord-send-message (instance message)
@@ -105,7 +112,63 @@ Rotates through different messages to keep agents attentive."
          instance
          (format template (magnus-instance-name instance)))))
     (setq magnus-coord--reminder-index
-          (1+ magnus-coord--reminder-index))))
+          (1+ magnus-coord--reminder-index)))
+  ;; Trim logs while we're at it
+  (magnus-coord-trim-all))
+
+;;; Log trimming
+
+(defun magnus-coord-trim-log (directory)
+  "Trim the Log section in DIRECTORY's coordination file.
+Keeps only the last `magnus-coord-log-max-entries' entries."
+  (when magnus-coord-log-max-entries
+    (let ((file (magnus-coord-file-path directory)))
+      (when (file-exists-p file)
+        (with-temp-buffer
+          (insert-file-contents file)
+          (goto-char (point-min))
+          (when (re-search-forward "^## Log" nil t)
+            (let* ((log-start (match-beginning 0))
+                   (section-end (save-excursion
+                                  (if (re-search-forward "^## " nil t)
+                                      (match-beginning 0)
+                                    (point-max))))
+                   (entries nil))
+              ;; Collect log entries (timestamp lines)
+              (goto-char log-start)
+              (while (re-search-forward
+                      "^\\[\\([0-9:]+\\)\\] .+$" section-end t)
+                (push (match-beginning 0) entries))
+              (setq entries (nreverse entries))
+              ;; If over limit, delete everything before the Nth-from-last
+              (when (> (length entries) magnus-coord-log-max-entries)
+                (let ((cut-point (nth (- (length entries)
+                                         magnus-coord-log-max-entries)
+                                      entries)))
+                  ;; Delete from after the Log header to the cut point
+                  (goto-char log-start)
+                  (forward-line 1)
+                  ;; Skip blank lines and comments after header
+                  (while (and (< (point) cut-point)
+                              (or (looking-at "^$")
+                                  (looking-at "^<!--")))
+                    (if (looking-at "^<!--")
+                        (if (re-search-forward "-->" nil t)
+                            (forward-line 1)
+                          (goto-char cut-point))
+                      (forward-line 1)))
+                  (when (< (point) cut-point)
+                    (delete-region (point) cut-point))
+                  (write-region (point-min) (point-max)
+                                file nil 'quiet))))))))))
+
+(defun magnus-coord-trim-all ()
+  "Trim coordination file logs for all active project directories."
+  (let ((dirs (delete-dups
+               (mapcar #'magnus-instance-directory
+                       (magnus-instances-list)))))
+    (dolist (dir dirs)
+      (magnus-coord-trim-log dir))))
 
 ;;; @mention watching
 
@@ -347,6 +410,9 @@ them hours. Think of it as leaving breadcrumbs for your teammates.
 2. Log a message that you've finished
 3. Add any non-obvious learnings to the Discoveries section
 4. If you made decisions that affect others, add to the Decisions section
+5. When you commit, include context in your commit message — what you learned,
+   why you made the choices you did, any gotchas future developers should know.
+   Commit messages are the permanent record; the coordination file is ephemeral.
 
 ## Conflict Resolution
 
@@ -422,6 +488,7 @@ When you run /coordinate, perform these steps in order:
 2. Log completion: `[HH:MM] your-name: Completed <task>. Files released: <list>.`
 3. **Debrief**: Add anything you learned to the Discoveries section — gotchas, patterns, API quirks, things that surprised you. Your teammates will thank you.
 4. If you made architectural decisions, add them to the Decisions section.
+5. **Commit with context**: When committing, write a message that captures the *why* — what you learned, trade-offs you considered, gotchas you hit. This is the permanent record of your work.
 
 ## Important
 
@@ -577,6 +644,32 @@ FILES is a list of files they're touching."
   "Remove AGENT from the Active Work table in DIRECTORY."
   (magnus-coord-update-active directory agent "" "done" ""))
 
+(defun magnus-coord-clear-session (directory)
+  "Clear session-specific sections from DIRECTORY's coordination file.
+Removes content from Discoveries and Decisions sections, keeping the
+headers intact.  Called when the last agent leaves a project."
+  (let ((file (magnus-coord-file-path directory)))
+    (when (file-exists-p file)
+      (with-temp-buffer
+        (insert-file-contents file)
+        (let ((modified nil))
+          (dolist (section '("Discoveries" "Decisions"))
+            (goto-char (point-min))
+            (when (re-search-forward
+                   (format "^## %s\n+" section) nil t)
+              (let ((content-start (point))
+                    (section-end (save-excursion
+                                  (if (re-search-forward "^## " nil t)
+                                      (match-beginning 0)
+                                    (point-max)))))
+                ;; Only clear if there's actual content (not just comments)
+                (when (< content-start section-end)
+                  (delete-region content-start section-end)
+                  (insert "\n")
+                  (setq modified t)))))
+          (when modified
+            (write-region (point-min) (point-max) file nil 'quiet)))))))
+
 (defun magnus-coord-reconcile (directory)
   "Reconcile the Active Work table in DIRECTORY with live instances.
 Removes entries for agents not in the Magnus registry, and entries
@@ -630,14 +723,15 @@ with stale statuses like done, died, finished, completed, stopped."
   (let ((name (magnus-instance-name instance)))
     (magnus-coord-clear-agent directory name)
     (magnus-coord-add-log directory name "Left the session")
-    ;; Stop watching if no agents remain in this directory
+    ;; If no agents remain, clean up for next session
     (let ((remaining (cl-count-if
                       (lambda (inst)
                         (and (not (eq inst instance))
                              (string= (magnus-instance-directory inst) directory)))
                       (magnus-instances-list))))
       (when (zerop remaining)
-        (magnus-coord-stop-watching directory)))))
+        (magnus-coord-stop-watching directory)
+        (magnus-coord-clear-session directory)))))
 
 ;;; Display
 
