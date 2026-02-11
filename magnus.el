@@ -120,13 +120,20 @@ Takes the working directory as argument and returns a string."
   "Nouns for generating instance names.")
 
 (defun magnus-generate-instance-name (_directory)
-  "Generate a random instance name.
+  "Generate a random instance name not already in use.
 DIRECTORY is ignored but accepted for API consistency."
-  (format "%s-%s"
-          (nth (random (length magnus--name-adjectives))
-               magnus--name-adjectives)
-          (nth (random (length magnus--name-nouns))
-               magnus--name-nouns)))
+  (let ((existing (mapcar #'magnus-instance-name (magnus-instances-list)))
+        (attempts 0)
+        name)
+    (while (and (< attempts 100)
+                (or (null name) (member name existing)))
+      (setq name (format "%s-%s"
+                         (nth (random (length magnus--name-adjectives))
+                              magnus--name-adjectives)
+                         (nth (random (length magnus--name-nouns))
+                              magnus--name-nouns)))
+      (setq attempts (1+ attempts)))
+    name))
 
 ;;; Core functionality
 

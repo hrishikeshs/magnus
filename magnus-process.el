@@ -340,23 +340,28 @@ Sends SIGCONT to continue the process."
 
 (defun magnus-process-chdir (instance directory)
   "Change INSTANCE's working directory to DIRECTORY.
-Uses the stored session ID, kills the instance, and respawns
-in the new directory with --resume to preserve conversation history."
+Kills the current process and respawns in the new directory."
   (let* ((new-dir (expand-file-name directory))
-         (name (magnus-instance-name instance))
-         (session-id (magnus-instance-session-id instance)))
-    ;; Update the directory in our records (keep session-id)
-    (magnus-instances-update instance :directory new-dir)
-    ;; Kill the old process and buffer
-    (magnus-process-kill instance t)
-    ;; Respawn after a delay with the session ID
+         (name (magnus-instance-name instance)))
+    ;; Kill old process and buffer immediately (no timers)
+    (when-let ((buffer (magnus-instance-buffer instance)))
+      (when (buffer-live-p buffer)
+        (let ((process (get-buffer-process buffer)))
+          (when (and process (process-live-p process))
+            (kill-process process)))
+        (kill-buffer buffer)))
+    ;; Update directory, clear old session (it belongs to the old project)
+    (magnus-instances-update instance
+                             :directory new-dir
+                             :status 'stopped
+                             :buffer nil
+                             :session-id nil)
+    ;; Spawn fresh in the new directory
     (run-with-timer
-     2 nil
+     1 nil
      (lambda ()
-       (magnus-process--spawn-with-session instance session-id)))
-    (message "Moving %s to %s%s..."
-             name new-dir
-             (if session-id " (resuming session)" " (no session to resume)"))))
+       (magnus-process--spawn instance)))
+    (message "Moving %s to %s (fresh start)..." name new-dir)))
 
 (defun magnus-process--project-hash (directory)
   "Convert DIRECTORY to Claude's project hash format.
