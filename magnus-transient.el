@@ -26,6 +26,7 @@
 (declare-function magnus-coord-open-instructions "magnus-coord")
 (declare-function magnus-health-toggle "magnus-health")
 (declare-function magnus-process-create-headless "magnus-process")
+(declare-function magnus-command "magnus-command")
 
 ;;; Main dispatch
 
@@ -54,6 +55,7 @@
   ["Attention (permission requests)"
    ("a" "Next in attention queue" magnus-attention-next)
    ("A" "Show attention queue" magnus-attention-show-queue)
+   ("b" "Command buffer" magnus-command)
    ("T" "Toggle attention monitoring" magnus-attention-toggle)
    ("H" "Toggle health monitoring" magnus-health-toggle)]
   ["Navigation"

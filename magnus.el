@@ -149,6 +149,7 @@ DIRECTORY is ignored but accepted for API consistency."
     (require 'magnus-coord)
     (require 'magnus-attention)
     (require 'magnus-health)
+    (require 'magnus-command)
     (magnus-persistence-load)
     (magnus-coord-ensure-watchers)
     (magnus-attention-start)

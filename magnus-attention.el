@@ -116,6 +116,11 @@ First element is the instance currently having the floor.")
 (defvar magnus-attention--checking nil
   "Non-nil if currently checking instances (prevents re-entry).")
 
+(defvar magnus-attention-prompt-detected-hook nil
+  "Hook called with (INSTANCE PROMPT-TEXT AUTO-APPROVED-P).
+Fired when a permission prompt is detected in an instance.
+AUTO-APPROVED-P is t if the prompt was auto-approved, nil otherwise.")
+
 ;;; Queue management
 
 (defun magnus-attention-request (instance)
@@ -174,8 +179,14 @@ Tries auto-approval first; falls back to the attention queue."
             (dolist (instance (magnus-instances-list))
               (when (and (magnus-attention--needs-input-p instance)
                          (not (magnus-process--headless-p instance)))
-                (unless (magnus-attention--try-auto-approve instance)
-                  (magnus-attention-request instance))))
+                (let ((prompt-text (with-current-buffer (magnus-instance-buffer instance)
+                                     (magnus-attention--last-line))))
+                  (if (magnus-attention--try-auto-approve instance)
+                      (run-hook-with-args 'magnus-attention-prompt-detected-hook
+                                          instance prompt-text t)
+                    (magnus-attention-request instance)
+                    (run-hook-with-args 'magnus-attention-prompt-detected-hook
+                                        instance prompt-text nil)))))
           (error nil))  ; Silently ignore errors
       (setq magnus-attention--checking nil))))
 

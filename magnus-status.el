@@ -22,6 +22,7 @@
 
 (declare-function magnus-dispatch "magnus-transient")
 (declare-function magnus-context "magnus-context")
+(declare-function magnus-command "magnus-command")
 
 ;; Defined in magnus.el
 (defvar magnus-buffer-name)
@@ -96,6 +97,7 @@
     (define-key map (kbd "p") #'magnus-status-previous)
     (define-key map (kbd "a") #'magnus-attention-next)
     (define-key map (kbd "A") #'magnus-attention-show-queue)
+    (define-key map (kbd "b") #'magnus-command)
     (define-key map (kbd "P") #'magnus-status-purge)
     (define-key map (kbd "?") #'magnus-dispatch)
     (define-key map (kbd "q") #'quit-window)
