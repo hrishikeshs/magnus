@@ -80,21 +80,25 @@ decision must be written.  Called by emacsclient from the hook script."
              (tool-input (alist-get 'tool_input request))
              (session-id (alist-get 'session_id request))
              (instance (magnus-permission--find-instance session-id)))
-        (if (magnus-permission--auto-approve-p tool-name tool-input)
-            ;; Auto-approve: write response immediately
-            (progn
-              (magnus-permission--write-response response-file "allow")
-              (magnus-permission--log-auto-approved instance tool-name tool-input))
-          ;; Need user input: queue in command buffer
-          (let ((plist (list :response-file response-file
-                             :instance instance
-                             :tool-name tool-name
-                             :tool-input tool-input
-                             :session-id session-id
-                             :timestamp (float-time))))
-            (puthash request-file plist magnus-permission--pending)
-            (magnus-permission--create-prompt instance tool-name tool-input
-                                              request-file response-file))))
+        (if (null instance)
+            ;; Not a Magnus-managed instance — skip so CC shows normal dialog
+            (with-temp-file response-file
+              (insert "SKIP"))
+          (if (magnus-permission--auto-approve-p tool-name tool-input)
+              ;; Auto-approve: write response immediately
+              (progn
+                (magnus-permission--write-response response-file "allow")
+                (magnus-permission--log-auto-approved instance tool-name tool-input))
+            ;; Need user input: queue in command buffer
+            (let ((plist (list :response-file response-file
+                               :instance instance
+                               :tool-name tool-name
+                               :tool-input tool-input
+                               :session-id session-id
+                               :timestamp (float-time))))
+              (puthash request-file plist magnus-permission--pending)
+              (magnus-permission--create-prompt instance tool-name tool-input
+                                                request-file response-file)))))
     (error
      (message "Magnus permission error: %s" (error-message-string err))
      ;; Write deny on error so the hook script doesn't hang
@@ -278,7 +282,9 @@ Called when the command buffer is killed to avoid hanging hook scripts."
    "\"(magnus-permission-notify \\\"$F\\\" \\\"$R\\\")\" "
    ">/dev/null 2>&1 || exit 1; "
    "for i in $(seq 1 1200); do "
-   "[ -f \"$R\" ] && { cat \"$R\"; exit 0; }; sleep 0.5; "
+   "[ -f \"$R\" ] && { "
+   "head -1 \"$R\" | grep -q \"^SKIP$\" && exit 1; "
+   "cat \"$R\"; exit 0; }; sleep 0.5; "
    "done; exit 1'")
   "Inline bash command for the CC PermissionRequest hook.
 Reads JSON from stdin, notifies Emacs via emacsclient, polls for
@@ -325,13 +331,13 @@ Idempotent — safe to call on every Magnus startup."
           (message "Magnus: PermissionRequest hook configured"))))))
 
 (defun magnus-permission--hook-matches-p (hook-config)
-  "Return non-nil if HOOK-CONFIG already has our magnus hook."
+  "Return non-nil if HOOK-CONFIG already has our exact magnus hook command."
   (condition-case nil
       (let* ((entry (aref hook-config 0))
              (inner-hooks (gethash "hooks" entry))
              (cmd-entry (aref inner-hooks 0))
              (command (gethash "command" cmd-entry)))
-        (and command (string-match-p "magnus-permission-notify" command)))
+        (and command (string= command magnus-permission--hook-command)))
     (error nil)))
 
 (defun magnus-permission-setup ()
