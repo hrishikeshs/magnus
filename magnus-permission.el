@@ -171,14 +171,12 @@ BEHAVIOR is \"allow\" or \"deny\".  MESSAGE is optional denial reason."
 
 (defun magnus-permission--log-auto-approved (instance tool-name tool-input)
   "Log an auto-approved event in the command buffer."
-  (when (and (bound-and-true-p magnus-command-show-auto-approved)
-             (get-buffer (or (bound-and-true-p magnus-command-buffer-name)
-                             "*magnus-command*")))
+  (when-let ((buf (and (bound-and-true-p magnus-command-show-auto-approved)
+                       (get-buffer (or (bound-and-true-p magnus-command-buffer-name)
+                                       "*magnus-command*")))))
     (let* ((id (when instance (magnus-instance-id instance)))
            (name (if instance (magnus-instance-name instance) "unknown"))
-           (summary (magnus-permission--format-tool-summary tool-name tool-input))
-           (buf (get-buffer (or (bound-and-true-p magnus-command-buffer-name)
-                                "*magnus-command*"))))
+           (summary (magnus-permission--format-tool-summary tool-name tool-input)))
       (with-current-buffer buf
         (magnus-command--add-event
          (list :type 'auto-approved
@@ -296,7 +294,9 @@ Idempotent — safe to call on every Magnus startup."
                        (with-temp-buffer
                          (insert-file-contents settings-file)
                          (json-parse-string (buffer-string)
-                                            :object-type 'hash-table))
+                                            :object-type 'hash-table
+                                            :false-object :json-false
+                                            :null-object :json-null))
                      (make-hash-table :test 'equal)))
          (hooks (or (gethash "hooks" settings)
                     (let ((h (make-hash-table :test 'equal)))

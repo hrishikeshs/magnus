@@ -20,6 +20,7 @@
 
 ;;; Code:
 
+(require 'cl-lib)
 (require 'magnus-instances)
 (require 'magnus-coord)
 
@@ -712,6 +713,43 @@ Otherwise, send as a free-form message."
         ;; Scroll to bottom if visible
         (magnus-command--scroll-to-bottom)))))
 
+(defun magnus-command--insert-ts-agent (ts name &optional instance-id)
+  "Insert a timestamp TS and agent NAME header.
+Optional INSTANCE-ID is attached as a text property for navigation."
+  (insert (propertize ts 'face 'magnus-command-timestamp))
+  (insert "  ")
+  (insert (propertize (format "[%s]" name)
+                      'face 'magnus-command-agent-name
+                      'magnus-command-instance-id instance-id)))
+
+(defun magnus-command--render-prompt-header (event active-hint)
+  "Insert the shared header for prompt/permission-request EVENT.
+ACTIVE-HINT is the string shown after the label when active (e.g. \" ← active\")."
+  (let* ((ts (magnus-command--format-timestamp (plist-get event :timestamp)))
+         (name (plist-get event :instance-name))
+         (handled (plist-get event :handled))
+         (active (eq event magnus-command--active-prompt))
+         (type (plist-get event :type))
+         (face (cond (handled 'magnus-command-prompt-handled)
+                     (active 'magnus-command-prompt-active)
+                     (t 'magnus-command-prompt-queued)))
+         (label (cond
+                 (handled
+                  (if (eq type 'permission-request)
+                      (format "(%s: %s)"
+                              (or (plist-get event :response) "?")
+                              (or (plist-get event :tool-name) "?"))
+                    (format "(approved: %s)" (or (plist-get event :response) "?"))))
+                 (active
+                  (if (eq type 'permission-request) "PERMISSION" "PROMPT"))
+                 (t "queued"))))
+    (magnus-command--insert-ts-agent ts name (plist-get event :instance-id))
+    (insert " ")
+    (insert (propertize label 'face face))
+    (when active
+      (insert (propertize active-hint 'face 'magnus-command-prompt-active)))
+    (insert "\n")))
+
 (defun magnus-command--render-event (event)
   "Insert formatted text for EVENT at point."
   (let ((type (plist-get event :type))
@@ -720,26 +758,9 @@ Otherwise, send as a free-form message."
         (text (plist-get event :text)))
     (pcase type
       ('prompt
-       (let* ((handled (plist-get event :handled))
-              (active (eq event magnus-command--active-prompt))
-              (context (plist-get event :context))
-              (face (cond (handled 'magnus-command-prompt-handled)
-                          (active 'magnus-command-prompt-active)
-                          (t 'magnus-command-prompt-queued)))
-              (label (cond (handled (format "(approved: %s)" (or (plist-get event :response) "?")))
-                           (active "PROMPT")
-                           (t "queued"))))
-         (insert (propertize ts 'face 'magnus-command-timestamp))
-         (insert "  ")
-         (insert (propertize (format "[%s]" name)
-                             'face 'magnus-command-agent-name
-                             'magnus-command-instance-id (plist-get event :instance-id)))
-         (insert " ")
-         (insert (propertize label 'face face))
-         (when active
-           (insert (propertize " ← active" 'face 'magnus-command-prompt-active)))
-         (insert "\n")
-         ;; Show rich context for pending prompts, just the last line for handled
+       (magnus-command--render-prompt-header event " ← active")
+       (let ((handled (plist-get event :handled))
+             (context (plist-get event :context)))
          (if (and context (not handled))
              (dolist (line (split-string context "\n" t))
                (insert (propertize (concat "  " line "\n")
@@ -747,55 +768,25 @@ Otherwise, send as a free-form message."
            (insert "  " (or text "")))))
 
       ('permission-request
-       (let* ((handled (plist-get event :handled))
-              (active (eq event magnus-command--active-prompt))
-              (tool-name (plist-get event :tool-name))
-              (tool-input (plist-get event :tool-input))
-              (face (cond (handled 'magnus-command-prompt-handled)
-                          (active 'magnus-command-prompt-active)
-                          (t 'magnus-command-prompt-queued)))
-              (label (cond (handled (format "(%s: %s)"
-                                            (or (plist-get event :response) "?")
-                                            (or tool-name "?")))
-                           (active "PERMISSION")
-                           (t "queued"))))
-         (insert (propertize ts 'face 'magnus-command-timestamp))
-         (insert "  ")
-         (insert (propertize (format "[%s]" name)
-                             'face 'magnus-command-agent-name
-                             'magnus-command-instance-id (plist-get event :instance-id)))
-         (insert " ")
-         (insert (propertize label 'face face))
-         (when active
-           (insert (propertize " ← respond y/n" 'face 'magnus-command-prompt-active)))
-         (insert "\n")
+       (magnus-command--render-prompt-header event " ← respond y/n")
+       (let ((handled (plist-get event :handled))
+             (tool-name (plist-get event :tool-name))
+             (tool-input (plist-get event :tool-input)))
          (if handled
              (insert "  " (or tool-name ""))
-           ;; Show structured tool detail
            (insert (propertize
                     (magnus-permission--format-tool-detail tool-name tool-input)
                     'face 'magnus-command-prompt-context)))))
 
       ('auto-approved
-       (insert (propertize ts 'face 'magnus-command-timestamp))
-       (insert "  ")
-       (insert (propertize (format "[%s]" name) 'face 'magnus-command-agent-name))
+       (magnus-command--insert-ts-agent ts name)
        (insert " ")
        (insert (propertize "auto-approved" 'face 'magnus-command-auto-approved))
        (insert "\n")
        (insert (propertize (concat "  " (or text ""))
                            'face 'magnus-command-auto-approved)))
 
-      ('user-response
-       (insert (propertize ts 'face 'magnus-command-timestamp))
-       (insert "  ")
-       (insert (propertize "you" 'face 'magnus-command-user))
-       (insert (propertize " -> " 'face 'magnus-command-user))
-       (insert (propertize name 'face 'magnus-command-agent-name))
-       (insert ": ")
-       (insert (or text "")))
-
-      ('message-sent
+      ((or 'user-response 'message-sent)
        (insert (propertize ts 'face 'magnus-command-timestamp))
        (insert "  ")
        (insert (propertize "you" 'face 'magnus-command-user))
@@ -805,11 +796,7 @@ Otherwise, send as a free-form message."
        (insert (or text "")))
 
       ('agent-reply
-       (insert (propertize ts 'face 'magnus-command-timestamp))
-       (insert "  ")
-       (insert (propertize name
-                           'face 'magnus-command-agent-name
-                           'magnus-command-instance-id (plist-get event :instance-id)))
+       (magnus-command--insert-ts-agent ts name (plist-get event :instance-id))
        (insert ": ")
        (insert (propertize (or text "")
                            'face 'magnus-command-agent-reply)))
