@@ -235,6 +235,8 @@ Longer replies are truncated with [...]."
     (define-key map (kbd "C-c C-v") #'magnus-command-visit)
     (define-key map (kbd "C-c C-g") #'magnus-command-refresh)
     (define-key map (kbd "C-c C-e") #'magnus-command-tail)
+    (define-key map (kbd "M-n") #'magnus-command-next-pending)
+    (define-key map (kbd "M-p") #'magnus-command-prev-pending)
     (define-key map (kbd "q") #'magnus-command--maybe-quit)
     map)
   "Keymap for `magnus-command-mode'.")
@@ -470,6 +472,34 @@ PROMPT-TEXT is the prompt line, AUTO-APPROVED-P is t if auto-approved."
   "Clear the active prompt, update input prompt."
   (setq magnus-command--active-prompt nil)
   (magnus-command--update-input-prompt))
+
+(defun magnus-command-next-pending ()
+  "Cycle to the next pending prompt."
+  (interactive)
+  (if (and magnus-command--active-prompt magnus-command--prompt-queue)
+      (progn
+        ;; Move active to back of queue, pop next
+        (setq magnus-command--prompt-queue
+              (append magnus-command--prompt-queue
+                      (list magnus-command--active-prompt)))
+        (setq magnus-command--active-prompt (pop magnus-command--prompt-queue))
+        (magnus-command--update-input-prompt)
+        (message "Prompt: %s" (plist-get magnus-command--active-prompt :instance-name)))
+    (message "No other pending prompts")))
+
+(defun magnus-command-prev-pending ()
+  "Cycle to the previous pending prompt."
+  (interactive)
+  (if (and magnus-command--active-prompt magnus-command--prompt-queue)
+      (let ((last (car (last magnus-command--prompt-queue))))
+        ;; Move active to front of queue, pop last to active
+        (setq magnus-command--prompt-queue
+              (cons magnus-command--active-prompt
+                    (butlast magnus-command--prompt-queue)))
+        (setq magnus-command--active-prompt last)
+        (magnus-command--update-input-prompt)
+        (message "Prompt: %s" (plist-get magnus-command--active-prompt :instance-name)))
+    (message "No other pending prompts")))
 
 ;;; Sending
 
