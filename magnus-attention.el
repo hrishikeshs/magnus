@@ -33,19 +33,24 @@
   :group 'magnus)
 
 (defcustom magnus-attention-patterns
-  '("\\[y/n\\]"
+  '(;; Classic y/n format
+    "\\[y/n\\]"
     "\\[Y/n\\]"
     "\\[yes/no\\]"
     "(y/n)"
     "(Y/n)"
+    ;; New CC numbered prompt format (Ink-based)
+    "Esc to cancel"
+    "Do you want to proceed"
+    "❯"
+    ;; General patterns
     "Press Enter to continue"
     "Allow\\?"
     "Proceed\\?"
     "Continue\\?"
     "approve"
     "permission"
-    "Do you want to"
-    "Esc to cancel")
+    "Do you want to")
   "Patterns that indicate an instance is waiting for input.
 These are matched against the last few lines of the vterm buffer."
   :type '(repeat regexp)
@@ -244,7 +249,8 @@ command buffer.  MAX-LINES defaults to 20."
 
 (defvar magnus-attention--prompt-anchors
   '("\\[y/n\\]" "\\[Y/n\\]" "\\[yes/no\\]" "(y/n)" "(Y/n)"
-    "Allow\\?" "Proceed\\?" "Esc to cancel")
+    "Allow\\?" "Proceed\\?" "Esc to cancel"
+    "Do you want to proceed")
   "Patterns confirming a real permission prompt.
 Auto-approve only fires when the tail text matches one of these
 AND an allowlisted tool/command pattern.")
@@ -253,7 +259,7 @@ AND an allowlisted tool/command pattern.")
   "Try to auto-approve INSTANCE's permission prompt.
 Only fires when the tail text looks like a genuine permission prompt
 AND contains an allowlisted tool/command pattern.
-Sends `1' for numbered prompts, `y' for y/n prompts."
+Sends `y' which maps to confirm:yes in all CC prompt formats."
   (when magnus-attention-auto-approve-patterns
     (when-let ((buffer (magnus-instance-buffer instance)))
       (when (buffer-live-p buffer)
@@ -262,10 +268,9 @@ Sends `1' for numbered prompts, `y' for y/n prompts."
           (when (and tail
                      (magnus-attention--is-prompt-line-p tail)
                      (magnus-attention--matches-auto-approve-p tail))
-            (let ((response (if (string-match-p "Esc to cancel" tail) "1" "y")))
-              (with-current-buffer buffer
-                (vterm-send-string response)
-                (vterm-send-return)))
+            (with-current-buffer buffer
+              (vterm-send-string "y")
+              (vterm-send-return))
             (message "Magnus: auto-approved for %s" (magnus-instance-name instance))
             t))))))
 
