@@ -30,7 +30,8 @@
 (require 'magnus-instances)
 
 (declare-function magnus-command--add-event "magnus-command")
-(declare-function magnus-attention--buffer-has-prompt-p "magnus-attention")
+(declare-function magnus-attention--is-prompt-line-p "magnus-attention")
+(declare-function magnus-attention--tail-text "magnus-attention")
 
 (defvar magnus-command-show-auto-approved)
 (defvar magnus-command-buffer-name)
@@ -219,13 +220,19 @@ Logs a `vterm-prompt' event and starts a return timer."
   "Poll callback: watch for the vterm prompt to appear then disappear.
 State machine:
   `waiting' — prompt not yet visible in vterm → transition to `active'
-  `active'  — prompt visible → when it disappears, switch back"
+  `active'  — prompt visible → when it disappears, switch back
+
+Uses narrow anchor patterns (e.g. [y/n], Esc to cancel) rather than
+the broad `magnus-attention-patterns' to avoid false positives from
+CC's normal output."
   (condition-case nil
       (let* ((instance magnus-permission--return-instance)
              (buffer (when instance (magnus-instance-buffer instance)))
              (has-prompt (and buffer (buffer-live-p buffer)
                               (with-current-buffer buffer
-                                (magnus-attention--buffer-has-prompt-p)))))
+                                (let ((tail (magnus-attention--tail-text)))
+                                  (and tail
+                                       (magnus-attention--is-prompt-line-p tail)))))))
         (pcase magnus-permission--return-state
           ('waiting
            (if has-prompt
