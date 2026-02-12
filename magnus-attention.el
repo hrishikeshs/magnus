@@ -215,6 +215,19 @@ Tries auto-approval first; falls back to the attention queue."
          (lines (split-string text "\n" t "[ \t]+")))
     (car (last lines))))
 
+(defun magnus-attention--prompt-context (&optional max-lines)
+  "Return the last MAX-LINES non-empty lines from the current buffer.
+Captures the full permission prompt dialog for display in the
+command buffer.  MAX-LINES defaults to 20."
+  (let* ((n (or max-lines 20))
+         (end (point-max))
+         (start (max (point-min) (- end 4000)))
+         (text (buffer-substring-no-properties start end))
+         (lines (split-string text "\n" t "[ \t\r]*"))
+         (recent (last lines n)))
+    (when recent
+      (mapconcat #'identity recent "\n"))))
+
 
 ;;; Auto-approval
 

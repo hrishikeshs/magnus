@@ -24,6 +24,7 @@
 (require 'magnus-coord)
 
 (declare-function magnus-attention--last-line "magnus-attention")
+(declare-function magnus-attention--prompt-context "magnus-attention")
 (declare-function magnus-attention-release "magnus-attention")
 (declare-function magnus-process-running-p "magnus-process")
 (declare-function magnus-process--session-jsonl-path "magnus-process")
@@ -146,6 +147,11 @@ Set to nil for no truncation, or an integer to truncate with [...]."
 (defface magnus-command-agent-reply
   '((t :inherit default))
   "Face for agent reply text in the command buffer."
+  :group 'magnus)
+
+(defface magnus-command-prompt-context
+  '((t :inherit font-lock-doc-face))
+  "Face for the rich prompt context (tool details, options)."
   :group 'magnus)
 
 ;;; Buffer-local variables
@@ -386,7 +392,15 @@ PROMPT-TEXT is the prompt line, AUTO-APPROVED-P is t if auto-approved."
   (when-let ((buf (get-buffer magnus-command-buffer-name)))
     (let* ((id (magnus-instance-id instance))
            (dedup-key (cons id (md5 (or prompt-text ""))))
-           (name (magnus-instance-name instance)))
+           (name (magnus-instance-name instance))
+           ;; Capture rich context from vterm (only for real prompts)
+           (context (unless auto-approved-p
+                      (condition-case nil
+                          (when-let ((vbuf (magnus-instance-buffer instance)))
+                            (when (buffer-live-p vbuf)
+                              (with-current-buffer vbuf
+                                (magnus-attention--prompt-context))))
+                        (error nil)))))
       ;; Dedup
       (unless (gethash dedup-key magnus-command--seen-prompts)
         (puthash dedup-key t magnus-command--seen-prompts)
@@ -407,6 +421,7 @@ PROMPT-TEXT is the prompt line, AUTO-APPROVED-P is t if auto-approved."
                                :instance-id id
                                :instance-name name
                                :text prompt-text
+                               :context context
                                :handled nil
                                :response nil)))
               (magnus-command--add-event event)
@@ -695,6 +710,7 @@ Otherwise, send as a free-form message."
       ('prompt
        (let* ((handled (plist-get event :handled))
               (active (eq event magnus-command--active-prompt))
+              (context (plist-get event :context))
               (face (cond (handled 'magnus-command-prompt-handled)
                           (active 'magnus-command-prompt-active)
                           (t 'magnus-command-prompt-queued)))
@@ -711,7 +727,12 @@ Otherwise, send as a free-form message."
          (when active
            (insert (propertize " ← active" 'face 'magnus-command-prompt-active)))
          (insert "\n")
-         (insert "  " (or text ""))))
+         ;; Show rich context for pending prompts, just the last line for handled
+         (if (and context (not handled))
+             (dolist (line (split-string context "\n" t))
+               (insert (propertize (concat "  " line "\n")
+                                   'face 'magnus-command-prompt-context)))
+           (insert "  " (or text "")))))
 
       ('auto-approved
        (insert (propertize ts 'face 'magnus-command-timestamp))
@@ -947,30 +968,36 @@ Acts as a fallback in case the hook-based detection missed a prompt."
                        magnus-command--events)
         ;; No unhandled prompt — create one from the vterm buffer
         (when-let ((instance (magnus-instances-get id)))
-          (let ((prompt-text
-                 (condition-case nil
-                     (when-let ((buffer (magnus-instance-buffer instance)))
-                       (when (buffer-live-p buffer)
+          (when-let ((buffer (magnus-instance-buffer instance)))
+            (when (buffer-live-p buffer)
+              (let ((prompt-text
+                     (condition-case nil
                          (with-current-buffer buffer
-                           (magnus-attention--last-line))))
-                   (error nil))))
-            (when prompt-text
-              (let* ((dedup-key (cons id (md5 prompt-text)))
-                     (name (magnus-instance-name instance)))
-                (unless (gethash dedup-key magnus-command--seen-prompts)
-                  (puthash dedup-key t magnus-command--seen-prompts)
-                  (let ((event (list :type 'prompt
-                                     :timestamp (float-time)
-                                     :instance-id id
-                                     :instance-name name
-                                     :text prompt-text
-                                     :handled nil
-                                     :response nil)))
-                    (magnus-command--add-event event)
-                    (setq magnus-command--prompt-queue
-                          (append magnus-command--prompt-queue (list event)))
-                    (unless magnus-command--active-prompt
-                      (magnus-command--activate-next))))))))))))
+                           (magnus-attention--last-line))
+                       (error nil)))
+                    (context
+                     (condition-case nil
+                         (with-current-buffer buffer
+                           (magnus-attention--prompt-context))
+                       (error nil))))
+                (when prompt-text
+                  (let* ((dedup-key (cons id (md5 prompt-text)))
+                         (name (magnus-instance-name instance)))
+                    (unless (gethash dedup-key magnus-command--seen-prompts)
+                      (puthash dedup-key t magnus-command--seen-prompts)
+                      (let ((event (list :type 'prompt
+                                         :timestamp (float-time)
+                                         :instance-id id
+                                         :instance-name name
+                                         :text prompt-text
+                                         :context context
+                                         :handled nil
+                                         :response nil)))
+                        (magnus-command--add-event event)
+                        (setq magnus-command--prompt-queue
+                              (append magnus-command--prompt-queue (list event)))
+                        (unless magnus-command--active-prompt
+                          (magnus-command--activate-next))))))))))))))
 
 (defun magnus-command--poll-instance (instance)
   "Poll JSONL for new assistant replies from INSTANCE."
