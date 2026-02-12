@@ -26,6 +26,7 @@
 
 ;;; Code:
 
+(require 'cl-lib)
 (require 'json)
 (require 'magnus-instances)
 
@@ -76,6 +77,9 @@ auto-approved without prompting."
 
 (defvar magnus-permission--return-start nil
   "Float-time when the switch happened, for timeout.")
+
+(defvar magnus-permission--return-interval 1
+  "Current poll interval in seconds.  Grows via exponential backoff.")
 
 ;;; Core: hook entry point
 
@@ -207,14 +211,20 @@ Logs a `vterm-prompt' event and starts a return timer."
           magnus-permission--return-instance instance
           magnus-permission--return-event event
           magnus-permission--return-state 'waiting
-          magnus-permission--return-start (float-time))
+          magnus-permission--return-start (float-time)
+          magnus-permission--return-interval 1)
     ;; Switch to vterm
     (when-let ((buffer (magnus-instance-buffer instance)))
       (when (buffer-live-p buffer)
         (pop-to-buffer buffer)))
-    ;; Start 1s poll timer to detect when prompt resolves
-    (setq magnus-permission--return-timer
-          (run-with-timer 1 1 #'magnus-permission--return-tick))))
+    ;; Start polling (one-shot timer, re-scheduled with backoff)
+    (magnus-permission--schedule-tick)))
+
+(defun magnus-permission--schedule-tick ()
+  "Schedule the next return-tick after the current interval."
+  (setq magnus-permission--return-timer
+        (run-with-timer magnus-permission--return-interval nil
+                        #'magnus-permission--return-tick)))
 
 (defun magnus-permission--return-tick ()
   "Poll callback: watch for the vterm prompt to appear then disappear.
@@ -224,7 +234,7 @@ State machine:
 
 Uses narrow anchor patterns (e.g. [y/n], Esc to cancel) rather than
 the broad `magnus-attention-patterns' to avoid false positives from
-CC's normal output."
+CC's normal output.  Exponential backoff: 1s → 2s → 4s → ... → 30s max."
   (condition-case nil
       (let* ((instance magnus-permission--return-instance)
              (buffer (when instance (magnus-instance-buffer instance)))
@@ -236,17 +246,27 @@ CC's normal output."
         (pcase magnus-permission--return-state
           ('waiting
            (if has-prompt
-               ;; Prompt appeared — transition to active
-               (setq magnus-permission--return-state 'active)
+               ;; Prompt appeared — transition to active, reset interval
+               (setq magnus-permission--return-state 'active
+                     magnus-permission--return-interval 1)
              ;; Check timeout (120s) — prompt never appeared
              (when (> (- (float-time) magnus-permission--return-start) 120)
-               (magnus-permission--cancel-return-timer))))
+               (magnus-permission--cancel-return-timer)
+               (cl-return-from magnus-permission--return-tick)))
+           (magnus-permission--backoff-and-reschedule))
           ('active
-           (unless has-prompt
-             ;; Prompt resolved — switch back
-             (magnus-permission--do-return)))
+           (if (not has-prompt)
+               ;; Prompt resolved — switch back
+               (magnus-permission--do-return)
+             (magnus-permission--backoff-and-reschedule)))
           (_ (magnus-permission--cancel-return-timer))))
     (error (magnus-permission--cancel-return-timer))))
+
+(defun magnus-permission--backoff-and-reschedule ()
+  "Increase the poll interval (max 30s) and schedule next tick."
+  (setq magnus-permission--return-interval
+        (min 30 (* 2 magnus-permission--return-interval)))
+  (magnus-permission--schedule-tick))
 
 (defun magnus-permission--do-return ()
   "Switch back to the return buffer and clean up."
@@ -268,7 +288,8 @@ CC's normal output."
         magnus-permission--return-event nil
         magnus-permission--return-state nil
         magnus-permission--return-start nil
-        magnus-permission--return-buffer nil))
+        magnus-permission--return-buffer nil
+        magnus-permission--return-interval 1))
 
 ;;; Formatting helpers
 
