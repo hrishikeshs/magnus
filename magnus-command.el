@@ -41,10 +41,11 @@
   :type 'boolean
   :group 'magnus)
 
-(defcustom magnus-command-reply-max-length 200
+(defcustom magnus-command-reply-max-length nil
   "Maximum characters to show for agent replies.
-Longer replies are truncated with [...]."
-  :type 'integer
+Set to nil for no truncation, or an integer to truncate with [...]."
+  :type '(choice (const :tag "No limit" nil)
+                 (integer :tag "Max characters"))
   :group 'magnus)
 
 ;;; Faces
@@ -1036,8 +1037,9 @@ Returns concatenated text blocks, or nil."
               (string-trim (mapconcat #'identity (nreverse texts) "")))))))))
 
 (defun magnus-command--truncate (text max-length)
-  "Truncate TEXT to MAX-LENGTH, appending [...] if needed."
-  (if (> (length text) max-length)
+  "Truncate TEXT to MAX-LENGTH, appending [...] if needed.
+If MAX-LENGTH is nil, return TEXT unchanged."
+  (if (and max-length (> (length text) max-length))
       (concat (substring text 0 max-length) " [...]")
     text))
 
