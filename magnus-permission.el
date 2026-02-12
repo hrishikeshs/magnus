@@ -10,13 +10,14 @@
 ;;; Commentary:
 
 ;; This module handles Claude Code PermissionRequest hooks.  When CC
-;; needs a tool permission, its hook fires a shell script that notifies
-;; Emacs via emacsclient.  This module receives the notification, checks
-;; auto-approve rules, and either responds immediately or creates a
-;; prompt in the command buffer for the user to decide.
+;; needs a tool permission, an inline bash command (configured in
+;; ~/.claude/settings.json) notifies Emacs via emacsclient.  This
+;; module receives the notification, checks auto-approve rules, and
+;; either responds immediately or creates a prompt in the command
+;; buffer for the user to decide.
 ;;
-;; The shell script at hooks/permission-handler.sh acts as a thin
-;; transport — all decision logic lives here.
+;; Call `magnus-permission-ensure-hook' on startup to auto-configure
+;; the hook in CC settings.  No external script files needed.
 
 ;;; Code:
 
@@ -268,30 +269,28 @@ Called when the command buffer is killed to avoid hanging hook scripts."
            magnus-permission--pending)
   (clrhash magnus-permission--pending))
 
-;;; Setup command
+;;; Hook command (inline — no external script file needed)
 
-(defun magnus-permission-setup ()
-  "Set up Claude Code PermissionRequest hooks for Magnus.
-Installs the hook script and configures ~/.claude/settings.json."
-  (interactive)
-  ;; Install hook script
-  (let ((hook-dir (expand-file-name "~/.magnus/hooks/"))
-        (src (expand-file-name "hooks/permission-handler.sh"
-                               (file-name-directory
-                                (or load-file-name buffer-file-name
-                                    default-directory)))))
-    (unless (file-directory-p hook-dir)
-      (make-directory hook-dir t))
-    (let ((dest (expand-file-name "permission-handler.sh" hook-dir)))
-      (copy-file src dest t)
-      (set-file-modes dest #o755)
-      (message "Magnus: hook script installed at %s" dest)
-      ;; Update CC settings
-      (magnus-permission--update-cc-settings dest))))
+(defconst magnus-permission--hook-command
+  (concat
+   "bash -c '"
+   "F=$(mktemp /tmp/mp-XXXXXX); R=${F}.resp; cat>$F; "
+   "trap \"rm -f $F $R\" EXIT; "
+   "emacsclient -n --eval "
+   "\"(magnus-permission-notify \\\"$F\\\" \\\"$R\\\")\" "
+   ">/dev/null 2>&1 || exit 1; "
+   "for i in $(seq 1 1200); do "
+   "[ -f \"$R\" ] && { cat \"$R\"; exit 0; }; sleep 0.5; "
+   "done; exit 1'")
+  "Inline bash command for the CC PermissionRequest hook.
+Reads JSON from stdin, notifies Emacs via emacsclient, polls for
+response.  Falls back to normal CC dialog if Emacs is unavailable.")
 
-(defun magnus-permission--update-cc-settings (hook-path)
-  "Add PermissionRequest hook to ~/.claude/settings.json.
-HOOK-PATH is the absolute path to the hook script."
+;;; Setup
+
+(defun magnus-permission-ensure-hook ()
+  "Ensure the PermissionRequest hook is configured in CC settings.
+Idempotent — safe to call on every Magnus startup."
   (let* ((settings-file (expand-file-name "~/.claude/settings.json"))
          (settings (if (file-exists-p settings-file)
                        (with-temp-buffer
@@ -302,22 +301,44 @@ HOOK-PATH is the absolute path to the hook script."
          (hooks (or (gethash "hooks" settings)
                     (let ((h (make-hash-table :test 'equal)))
                       (puthash "hooks" h settings)
-                      h)))
-         (perm-hooks (vector
-                      (let ((h (make-hash-table :test 'equal)))
-                        (puthash "hooks"
-                                 (vector
-                                  (let ((inner (make-hash-table :test 'equal)))
-                                    (puthash "type" "command" inner)
-                                    (puthash "command" hook-path inner)
-                                    (puthash "timeout" 600 inner)
-                                    inner))
-                                 h)
-                        h))))
-    (puthash "PermissionRequest" perm-hooks hooks)
-    (with-temp-file settings-file
-      (insert (json-encode settings)))
-    (message "Magnus: PermissionRequest hook added to %s" settings-file)))
+                      h))))
+    ;; Check if already configured with our command
+    (let ((existing (gethash "PermissionRequest" hooks)))
+      (unless (and existing (magnus-permission--hook-matches-p existing))
+        ;; Install or update
+        (let ((perm-hooks
+               (vector
+                (let ((h (make-hash-table :test 'equal)))
+                  (puthash "hooks"
+                           (vector
+                            (let ((inner (make-hash-table :test 'equal)))
+                              (puthash "type" "command" inner)
+                              (puthash "command"
+                                       magnus-permission--hook-command inner)
+                              (puthash "timeout" 600 inner)
+                              inner))
+                           h)
+                  h))))
+          (puthash "PermissionRequest" perm-hooks hooks)
+          (with-temp-file settings-file
+            (insert (json-encode settings)))
+          (message "Magnus: PermissionRequest hook configured"))))))
+
+(defun magnus-permission--hook-matches-p (hook-config)
+  "Return non-nil if HOOK-CONFIG already has our magnus hook."
+  (condition-case nil
+      (let* ((entry (aref hook-config 0))
+             (inner-hooks (gethash "hooks" entry))
+             (cmd-entry (aref inner-hooks 0))
+             (command (gethash "command" cmd-entry)))
+        (and command (string-match-p "magnus-permission-notify" command)))
+    (error nil)))
+
+(defun magnus-permission-setup ()
+  "Interactively set up CC PermissionRequest hooks for Magnus."
+  (interactive)
+  (magnus-permission-ensure-hook)
+  (message "Magnus: PermissionRequest hook ready.  Restart CC instances to activate."))
 
 (provide 'magnus-permission)
 ;;; magnus-permission.el ends here

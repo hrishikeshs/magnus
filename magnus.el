@@ -58,6 +58,7 @@
 (declare-function magnus-process-create "magnus-process")
 (declare-function magnus-process-create-headless "magnus-process")
 (declare-function magnus-health-start "magnus-health")
+(declare-function magnus-permission-ensure-hook "magnus-permission")
 
 ;;; Customization
 
@@ -156,6 +157,7 @@ DIRECTORY is ignored but accepted for API consistency."
     (magnus-attention-start)
     (magnus-coord-start-reminders)
     (magnus-health-start)
+    (magnus-permission-ensure-hook)
     (setq magnus--initialized t)))
 
 ;;;###autoload
