@@ -257,16 +257,19 @@ AND contains an allowlisted tool/command pattern."
 ;;; Notifications
 
 (defun magnus-attention--notify (instance)
-  "Notify user that INSTANCE needs attention."
+  "Notify user that INSTANCE needs attention.
+Suppressed when the command buffer is visible (prompts show there)."
   (let ((name (magnus-instance-name instance))
         (now (float-time)))
-    ;; Avoid notification spam (at least 5 seconds between notifications)
-    (when (or (null magnus-attention--last-notify)
-              (> (- now magnus-attention--last-notify) 5))
-      (setq magnus-attention--last-notify now)
-      (message "Magnus: %s needs your attention" name)
-      ;; Ring bell for urgent notification
-      (ding t))))
+    ;; Skip if command buffer is visible — it shows prompts inline
+    (unless (get-buffer-window "*magnus-command*")
+      ;; Avoid notification spam (at least 5 seconds between notifications)
+      (when (or (null magnus-attention--last-notify)
+                (> (- now magnus-attention--last-notify) 5))
+        (setq magnus-attention--last-notify now)
+        (message "Magnus: %s needs your attention" name)
+        ;; Ring bell for urgent notification
+        (ding t)))))
 
 ;;; Queue display
 

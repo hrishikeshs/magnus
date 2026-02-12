@@ -21,6 +21,7 @@
 (declare-function magnus-process--list-sessions "magnus-process")
 (declare-function magnus-process--most-recent-session "magnus-process")
 (declare-function magnus-process--session-jsonl-path "magnus-process")
+(declare-function magnus-process-read-jsonl-lines "magnus-process")
 
 ;;; Faces
 
@@ -167,9 +168,7 @@
 
 (defun magnus-trace--read-lines (file)
   "Read all lines from FILE."
-  (with-temp-buffer
-    (insert-file-contents file)
-    (split-string (buffer-string) "\n" t)))
+  (magnus-process-read-jsonl-lines file))
 
 (defun magnus-trace--render-entry (entry)
   "Render a JSONL ENTRY into the trace buffer."

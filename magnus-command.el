@@ -27,8 +27,12 @@
 (declare-function magnus-attention-release "magnus-attention")
 (declare-function magnus-process-running-p "magnus-process")
 (declare-function magnus-process--session-jsonl-path "magnus-process")
+(declare-function magnus-process-read-jsonl-lines "magnus-process")
 (declare-function vterm-send-string "vterm")
 (declare-function vterm-send-return "vterm")
+
+;; Attention queue variable (defined in magnus-attention.el)
+(defvar magnus-attention-queue)
 
 ;;; Customization
 
@@ -887,14 +891,55 @@ Remove stale prompts and activate next if needed."
     (setq magnus-command--poll-timer nil)))
 
 (defun magnus-command--poll-jsonl ()
-  "Poll JSONL files for new assistant replies from all instances."
+  "Poll JSONL files for agent replies and sync attention queue."
   (when-let ((buf (get-buffer magnus-command-buffer-name)))
     (with-current-buffer buf
+      ;; Sync prompts from attention queue (fallback for missed hooks)
+      (magnus-command--sync-attention-queue)
+      ;; Poll JSONL for agent replies
       (dolist (instance (magnus-instances-list))
         (when (magnus-instance-session-id instance)
           (condition-case nil
               (magnus-command--poll-instance instance)
             (error nil)))))))
+
+(defun magnus-command--sync-attention-queue ()
+  "Create prompt events for attention queue entries not yet in the command buffer.
+Acts as a fallback in case the hook-based detection missed a prompt."
+  (when (bound-and-true-p magnus-attention-queue)
+    (dolist (id magnus-attention-queue)
+      ;; Check if we already have an unhandled prompt for this instance
+      (unless (cl-some (lambda (event)
+                         (and (eq (plist-get event :type) 'prompt)
+                              (string= (plist-get event :instance-id) id)
+                              (not (plist-get event :handled))))
+                       magnus-command--events)
+        ;; No unhandled prompt — create one from the vterm buffer
+        (when-let ((instance (magnus-instances-get id)))
+          (let ((prompt-text
+                 (condition-case nil
+                     (when-let ((buffer (magnus-instance-buffer instance)))
+                       (when (buffer-live-p buffer)
+                         (with-current-buffer buffer
+                           (magnus-attention--last-line))))
+                   (error nil))))
+            (when prompt-text
+              (let* ((dedup-key (cons id (md5 prompt-text)))
+                     (name (magnus-instance-name instance)))
+                (unless (gethash dedup-key magnus-command--seen-prompts)
+                  (puthash dedup-key t magnus-command--seen-prompts)
+                  (let ((event (list :type 'prompt
+                                     :timestamp (float-time)
+                                     :instance-id id
+                                     :instance-name name
+                                     :text prompt-text
+                                     :handled nil
+                                     :response nil)))
+                    (magnus-command--add-event event)
+                    (setq magnus-command--prompt-queue
+                          (append magnus-command--prompt-queue (list event)))
+                    (unless magnus-command--active-prompt
+                      (magnus-command--activate-next))))))))))))
 
 (defun magnus-command--poll-instance (instance)
   "Poll JSONL for new assistant replies from INSTANCE."
@@ -920,9 +965,7 @@ Remove stale prompts and activate next if needed."
 
 (defun magnus-command--read-jsonl-lines (file)
   "Read all lines from JSONL FILE."
-  (with-temp-buffer
-    (insert-file-contents file)
-    (split-string (buffer-string) "\n" t)))
+  (magnus-process-read-jsonl-lines file))
 
 (defun magnus-command--process-jsonl-entry (entry instance-id instance-name)
   "Process a parsed JSONL ENTRY, creating an event if it's a reply."

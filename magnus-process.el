@@ -248,6 +248,13 @@ Maps C-g to send ESC to Claude, since Emacs intercepts the real ESC key."
     (when (file-exists-p jsonl-file)
       jsonl-file)))
 
+(defun magnus-process-read-jsonl-lines (file)
+  "Read all lines from JSONL FILE.
+Shared by trace and command modules."
+  (with-temp-buffer
+    (insert-file-contents file)
+    (split-string (buffer-string) "\n" t)))
+
 (defun magnus-process--setup-sentinel (instance buffer)
   "Set up process monitoring for INSTANCE in BUFFER."
   (when-let ((process (get-buffer-process buffer)))
