@@ -88,6 +88,49 @@
   "Face for the [agent] > prompt in the input area."
   :group 'magnus)
 
+;; Background color faces for agent messages (extend to window edge)
+(defface magnus-command-bg-1
+  '((((background dark)) :background "#1a2636" :extend t)
+    (((background light)) :background "#e8f0ff" :extend t))
+  "Background for agent color slot 1 (blue tint)."
+  :group 'magnus)
+
+(defface magnus-command-bg-2
+  '((((background dark)) :background "#1a3620" :extend t)
+    (((background light)) :background "#e8ffe8" :extend t))
+  "Background for agent color slot 2 (green tint)."
+  :group 'magnus)
+
+(defface magnus-command-bg-3
+  '((((background dark)) :background "#2a1a36" :extend t)
+    (((background light)) :background "#f0e8ff" :extend t))
+  "Background for agent color slot 3 (purple tint)."
+  :group 'magnus)
+
+(defface magnus-command-bg-4
+  '((((background dark)) :background "#362a1a" :extend t)
+    (((background light)) :background "#fff0e8" :extend t))
+  "Background for agent color slot 4 (amber tint)."
+  :group 'magnus)
+
+(defface magnus-command-bg-5
+  '((((background dark)) :background "#1a3636" :extend t)
+    (((background light)) :background "#e8ffff" :extend t))
+  "Background for agent color slot 5 (cyan tint)."
+  :group 'magnus)
+
+(defface magnus-command-bg-6
+  '((((background dark)) :background "#361a2a" :extend t)
+    (((background light)) :background "#ffe8f0" :extend t))
+  "Background for agent color slot 6 (rose tint)."
+  :group 'magnus)
+
+(defface magnus-command-bg-user
+  '((((background dark)) :background "#2a2a1e" :extend t)
+    (((background light)) :background "#fffff0" :extend t))
+  "Background for user messages (warm tint)."
+  :group 'magnus)
+
 ;;; Buffer-local variables
 
 (defvar-local magnus-command--events nil
@@ -108,6 +151,12 @@
 (defvar-local magnus-command--prev-instances nil
   "Snapshot of instance IDs for detecting joins/leaves.")
 
+(defvar-local magnus-command--agent-bg-map (make-hash-table :test 'equal)
+  "Hash table mapping instance-id to a background face.")
+
+(defvar-local magnus-command--agent-bg-next 0
+  "Next index into the background face palette.")
+
 ;;; Global variables
 
 (defvar magnus-command--seen-prompts (make-hash-table :test 'equal)
@@ -115,6 +164,35 @@
 
 (defvar magnus-command--reconcile-timer nil
   "30s timer for stale prompt cleanup.")
+
+;;; Background color assignment
+
+(defconst magnus-command--bg-palette
+  '(magnus-command-bg-1
+    magnus-command-bg-2
+    magnus-command-bg-3
+    magnus-command-bg-4
+    magnus-command-bg-5
+    magnus-command-bg-6)
+  "Palette of background faces cycled through for agents.")
+
+(defun magnus-command--get-bg-face (event)
+  "Return the background face for EVENT, or nil for system events."
+  (let ((type (plist-get event :type))
+        (id (plist-get event :instance-id)))
+    (pcase type
+      ((or 'user-response 'message-sent)
+       'magnus-command-bg-user)
+      ('status-change nil)
+      (_
+       (when id
+         (or (gethash id magnus-command--agent-bg-map)
+             (let ((face (nth (mod magnus-command--agent-bg-next
+                                   (length magnus-command--bg-palette))
+                              magnus-command--bg-palette)))
+               (puthash id face magnus-command--agent-bg-map)
+               (cl-incf magnus-command--agent-bg-next)
+               face)))))))
 
 ;;; Buffer name
 
@@ -541,8 +619,10 @@ Otherwise, send as a free-form message."
               (goto-char sep-pos)
               (beginning-of-line)
               ;; Insert event text before separator
-              (magnus-command--render-event event)
-              (insert "\n"))))
+              (let ((start (point)))
+                (magnus-command--render-event event)
+                (insert "\n")
+                (magnus-command--apply-bg-overlay event start (point))))))
         ;; Update marker and read-only
         (magnus-command--apply-read-only)
         ;; Scroll to bottom if visible
@@ -611,6 +691,13 @@ Otherwise, send as a free-form message."
                            'face 'magnus-command-system
                            'magnus-command-instance-id (plist-get event :instance-id)))))))
 
+(defun magnus-command--apply-bg-overlay (event start end)
+  "Apply a background overlay for EVENT from START to END."
+  (when-let ((face (magnus-command--get-bg-face event)))
+    (let ((ov (make-overlay start end)))
+      (overlay-put ov 'face face)
+      (overlay-put ov 'magnus-command-bg t))))
+
 (defun magnus-command--format-timestamp (time)
   "Format TIME as HH:MM."
   (format-time-string "%H:%M" (seconds-to-time (or time (float-time)))))
@@ -630,14 +717,17 @@ Otherwise, send as a free-form message."
     (with-current-buffer buf
       (let ((inhibit-read-only t)
             (user-text (magnus-command--get-input-text)))
+        (remove-overlays (point-min) (point-max) 'magnus-command-bg t)
         (erase-buffer)
         ;; Header
         (insert (propertize "Magnus Command Buffer" 'face 'magnus-command-agent-name))
         (insert "\n\n")
         ;; Events (oldest first — our list is newest-first)
         (dolist (event (reverse magnus-command--events))
-          (magnus-command--render-event event)
-          (insert "\n"))
+          (let ((start (point)))
+            (magnus-command--render-event event)
+            (insert "\n")
+            (magnus-command--apply-bg-overlay event start (point))))
         ;; Separator
         (magnus-command--insert-separator)
         ;; Input area
