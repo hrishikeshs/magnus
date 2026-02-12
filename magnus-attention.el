@@ -44,7 +44,8 @@
     "Continue\\?"
     "approve"
     "permission"
-    "Do you want to")
+    "Do you want to"
+    "Esc to cancel")
   "Patterns that indicate an instance is waiting for input.
 These are matched against the last few lines of the vterm buffer."
   :type '(repeat regexp)
@@ -200,12 +201,22 @@ Tries auto-approval first; falls back to the attention queue."
     (error nil)))
 
 (defun magnus-attention--buffer-has-prompt-p ()
-  "Check if current buffer has a yes/no prompt on the last line."
-  (let ((last-line (magnus-attention--last-line)))
-    (when last-line
+  "Check if current buffer has a prompt in the last few lines."
+  (let ((tail (magnus-attention--tail-text)))
+    (when tail
       (cl-some (lambda (pattern)
-                 (string-match-p pattern last-line))
+                 (string-match-p pattern tail))
                magnus-attention-patterns))))
+
+(defun magnus-attention--tail-text ()
+  "Return the last `magnus-attention-scan-lines' lines as a single string."
+  (let* ((end (point-max))
+         (start (max (point-min) (- end 2000)))
+         (text (buffer-substring-no-properties start end))
+         (lines (split-string text "\n" t "[ \t]+"))
+         (recent (last lines magnus-attention-scan-lines)))
+    (when recent
+      (mapconcat #'identity recent "\n"))))
 
 (defun magnus-attention--last-line ()
   "Return the last non-empty line in the current buffer, or nil."
@@ -232,26 +243,29 @@ command buffer.  MAX-LINES defaults to 20."
 ;;; Auto-approval
 
 (defvar magnus-attention--prompt-anchors
-  '("\\[y/n\\]" "\\[Y/n\\]" "\\[yes/no\\]" "(y/n)" "(Y/n)" "Allow\\?" "Proceed\\?")
-  "Patterns confirming a real yes/no prompt on the last line.
-Auto-approve only fires when the last line matches one of these
-AND an allowlist entry.")
+  '("\\[y/n\\]" "\\[Y/n\\]" "\\[yes/no\\]" "(y/n)" "(Y/n)"
+    "Allow\\?" "Proceed\\?" "Esc to cancel")
+  "Patterns confirming a real permission prompt.
+Auto-approve only fires when the tail text matches one of these
+AND an allowlisted tool/command pattern.")
 
 (defun magnus-attention--try-auto-approve (instance)
   "Try to auto-approve INSTANCE's permission prompt.
-Only fires when the last line looks like a genuine yes/no prompt
-AND contains an allowlisted tool/command pattern."
+Only fires when the tail text looks like a genuine permission prompt
+AND contains an allowlisted tool/command pattern.
+Sends `1' for numbered prompts, `y' for y/n prompts."
   (when magnus-attention-auto-approve-patterns
     (when-let ((buffer (magnus-instance-buffer instance)))
       (when (buffer-live-p buffer)
-        (let ((last-line (with-current-buffer buffer
-                           (magnus-attention--last-line))))
-          (when (and last-line
-                     (magnus-attention--is-prompt-line-p last-line)
-                     (magnus-attention--matches-auto-approve-p last-line))
-            (with-current-buffer buffer
-              (vterm-send-string "y")
-              (vterm-send-return))
+        (let ((tail (with-current-buffer buffer
+                      (magnus-attention--tail-text))))
+          (when (and tail
+                     (magnus-attention--is-prompt-line-p tail)
+                     (magnus-attention--matches-auto-approve-p tail))
+            (let ((response (if (string-match-p "Esc to cancel" tail) "1" "y")))
+              (with-current-buffer buffer
+                (vterm-send-string response)
+                (vterm-send-return)))
             (message "Magnus: auto-approved for %s" (magnus-instance-name instance))
             t))))))
 

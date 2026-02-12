@@ -24,7 +24,9 @@
 (require 'magnus-coord)
 
 (declare-function magnus-attention--last-line "magnus-attention")
+(declare-function magnus-attention--tail-text "magnus-attention")
 (declare-function magnus-attention--prompt-context "magnus-attention")
+(declare-function magnus-attention--buffer-has-prompt-p "magnus-attention")
 (declare-function magnus-attention-release "magnus-attention")
 (declare-function magnus-process-running-p "magnus-process")
 (declare-function magnus-process--session-jsonl-path "magnus-process")
@@ -925,8 +927,9 @@ Remove stale prompts and activate next if needed."
         (let ((buffer (magnus-instance-buffer instance)))
           (or (null buffer)
               (not (buffer-live-p buffer))
+              ;; Check if the vterm still has a prompt pattern in its tail
               (not (with-current-buffer buffer
-                     (magnus-attention--last-line))))))))
+                     (magnus-attention--buffer-has-prompt-p))))))))
 
 ;;; JSONL polling for agent replies
 
