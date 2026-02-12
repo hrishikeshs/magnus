@@ -13,8 +13,13 @@
 ;; needs a tool permission, an inline bash command (configured in
 ;; ~/.claude/settings.json) notifies Emacs via emacsclient.  This
 ;; module receives the notification, checks auto-approve rules, and
-;; either responds immediately or creates a prompt in the command
-;; buffer for the user to decide.
+;; either responds immediately or SKIPs the hook and switches the
+;; user to the agent's vterm so they can use CC's native dialog.
+;;
+;; The command buffer is a pure log/awareness layer — it shows what
+;; happened but doesn't handle y/n responses.  The user interacts
+;; with CC's native prompt dialog which has better UX (allow always,
+;; full context, interactive questions, etc.).
 ;;
 ;; Call `magnus-permission-ensure-hook' on startup to auto-configure
 ;; the hook in CC settings.  No external script files needed.
@@ -25,10 +30,8 @@
 (require 'magnus-instances)
 
 (declare-function magnus-command--add-event "magnus-command")
-(declare-function magnus-command--activate-next "magnus-command")
+(declare-function magnus-attention--buffer-has-prompt-p "magnus-attention")
 
-(defvar magnus-command--active-prompt)
-(defvar magnus-command--prompt-queue)
 (defvar magnus-command-show-auto-approved)
 (defvar magnus-command-buffer-name)
 
@@ -53,24 +56,37 @@ auto-approved without prompting."
   :type '(repeat regexp)
   :group 'magnus)
 
-;;; State
+;;; Switch-to-vterm state
 
-(defvar magnus-permission--pending (make-hash-table :test 'equal)
-  "Pending permission requests.
-Hash table: request-file -> plist with keys:
-  :response-file  STRING  path to write the decision
-  :instance       STRUCT  magnus-instance or nil
-  :tool-name      STRING
-  :tool-input     ALIST
-  :session-id     STRING
-  :timestamp      FLOAT")
+(defvar magnus-permission--return-buffer nil
+  "Buffer to switch back to after the user handles a prompt in vterm.")
+
+(defvar magnus-permission--return-timer nil
+  "1-second poll timer watching for the vterm prompt to resolve.")
+
+(defvar magnus-permission--return-instance nil
+  "Instance whose vterm we switched to, or nil.")
+
+(defvar magnus-permission--return-event nil
+  "The `vterm-prompt' event logged when we switched, for marking handled.")
+
+(defvar magnus-permission--return-state nil
+  "State: nil, `waiting' (prompt not visible), `active' (visible).")
+
+(defvar magnus-permission--return-start nil
+  "Float-time when the switch happened, for timeout.")
 
 ;;; Core: hook entry point
 
 (defun magnus-permission-notify (request-file response-file)
   "Handle a PermissionRequest from Claude Code.
 REQUEST-FILE contains the hook JSON.  RESPONSE-FILE is where the
-decision must be written.  Called by emacsclient from the hook script."
+decision must be written.  Called by emacsclient from the hook script.
+
+Three outcomes:
+  1. Not a Magnus instance → SKIP (CC shows normal dialog)
+  2. Auto-approve match → allow via hook response
+  3. Everything else → SKIP + switch to agent's vterm"
   (condition-case err
       (let* ((json-string (with-temp-buffer
                             (insert-file-contents request-file)
@@ -89,22 +105,16 @@ decision must be written.  Called by emacsclient from the hook script."
               (progn
                 (magnus-permission--write-response response-file "allow")
                 (magnus-permission--log-auto-approved instance tool-name tool-input))
-            ;; Need user input: queue in command buffer
-            (let ((plist (list :response-file response-file
-                               :instance instance
-                               :tool-name tool-name
-                               :tool-input tool-input
-                               :session-id session-id
-                               :timestamp (float-time))))
-              (puthash request-file plist magnus-permission--pending)
-              (magnus-permission--create-prompt instance tool-name tool-input
-                                                request-file response-file)))))
+            ;; Need user input: SKIP hook and switch to agent's vterm
+            (with-temp-file response-file
+              (insert "SKIP"))
+            (magnus-permission--switch-to-vterm instance tool-name tool-input))))
     (error
      (message "Magnus permission error: %s" (error-message-string err))
-     ;; Write deny on error so the hook script doesn't hang
+     ;; Write SKIP on error so CC falls back to normal dialog
      (condition-case nil
-         (magnus-permission--write-response response-file "deny"
-                                            (error-message-string err))
+         (with-temp-file response-file
+           (insert "SKIP"))
        (error nil))))
   nil)
 
@@ -145,33 +155,7 @@ BEHAVIOR is \"allow\" or \"deny\".  MESSAGE is optional denial reason."
     (with-temp-file response-file
       (insert (json-encode output)))))
 
-;;; Command buffer integration
-
-(defun magnus-permission--create-prompt (instance tool-name tool-input
-                                                  request-file response-file)
-  "Create a permission-request event in the command buffer."
-  (when-let ((buf (get-buffer (or (bound-and-true-p magnus-command-buffer-name)
-                                  "*magnus-command*"))))
-    (with-current-buffer buf
-      (let* ((id (when instance (magnus-instance-id instance)))
-             (name (if instance
-                       (magnus-instance-name instance)
-                     "unknown"))
-             (event (list :type 'permission-request
-                          :timestamp (float-time)
-                          :instance-id id
-                          :instance-name name
-                          :tool-name tool-name
-                          :tool-input tool-input
-                          :request-file request-file
-                          :response-file response-file
-                          :handled nil
-                          :response nil)))
-        (magnus-command--add-event event)
-        (setq magnus-command--prompt-queue
-              (append magnus-command--prompt-queue (list event)))
-        (unless magnus-command--active-prompt
-          (magnus-command--activate-next))))))
+;;; Command buffer logging
 
 (defun magnus-permission--log-auto-approved (instance tool-name tool-input)
   "Log an auto-approved event in the command buffer."
@@ -189,6 +173,95 @@ BEHAVIOR is \"allow\" or \"deny\".  MESSAGE is optional denial reason."
                :instance-name name
                :text summary
                :handled t))))))
+
+(defun magnus-permission--log-vterm-prompt (instance tool-name tool-input)
+  "Log a vterm-prompt event in the command buffer.
+Returns the event plist so we can mark it handled later."
+  (let* ((id (when instance (magnus-instance-id instance)))
+         (name (if instance (magnus-instance-name instance) "unknown"))
+         (event (list :type 'vterm-prompt
+                      :timestamp (float-time)
+                      :instance-id id
+                      :instance-name name
+                      :tool-name tool-name
+                      :tool-input tool-input
+                      :handled nil)))
+    (when-let ((buf (get-buffer (or (bound-and-true-p magnus-command-buffer-name)
+                                    "*magnus-command*"))))
+      (with-current-buffer buf
+        (magnus-command--add-event event)))
+    event))
+
+;;; Switch-to-vterm mechanism
+
+(defun magnus-permission--switch-to-vterm (instance tool-name tool-input)
+  "Switch to INSTANCE's vterm so the user can handle the prompt natively.
+Logs a `vterm-prompt' event and starts a return timer."
+  ;; Cancel any existing return timer
+  (magnus-permission--cancel-return-timer)
+  ;; Log the event
+  (let ((event (magnus-permission--log-vterm-prompt instance tool-name tool-input)))
+    ;; Save return state
+    (setq magnus-permission--return-buffer (current-buffer)
+          magnus-permission--return-instance instance
+          magnus-permission--return-event event
+          magnus-permission--return-state 'waiting
+          magnus-permission--return-start (float-time))
+    ;; Switch to vterm
+    (when-let ((buffer (magnus-instance-buffer instance)))
+      (when (buffer-live-p buffer)
+        (pop-to-buffer buffer)))
+    ;; Start 1s poll timer to detect when prompt resolves
+    (setq magnus-permission--return-timer
+          (run-with-timer 1 1 #'magnus-permission--return-tick))))
+
+(defun magnus-permission--return-tick ()
+  "Poll callback: watch for the vterm prompt to appear then disappear.
+State machine:
+  `waiting' — prompt not yet visible in vterm → transition to `active'
+  `active'  — prompt visible → when it disappears, switch back"
+  (condition-case nil
+      (let* ((instance magnus-permission--return-instance)
+             (buffer (when instance (magnus-instance-buffer instance)))
+             (has-prompt (and buffer (buffer-live-p buffer)
+                              (with-current-buffer buffer
+                                (magnus-attention--buffer-has-prompt-p)))))
+        (pcase magnus-permission--return-state
+          ('waiting
+           (if has-prompt
+               ;; Prompt appeared — transition to active
+               (setq magnus-permission--return-state 'active)
+             ;; Check timeout (120s) — prompt never appeared
+             (when (> (- (float-time) magnus-permission--return-start) 120)
+               (magnus-permission--cancel-return-timer))))
+          ('active
+           (unless has-prompt
+             ;; Prompt resolved — switch back
+             (magnus-permission--do-return)))
+          (_ (magnus-permission--cancel-return-timer))))
+    (error (magnus-permission--cancel-return-timer))))
+
+(defun magnus-permission--do-return ()
+  "Switch back to the return buffer and clean up."
+  ;; Mark the event as handled
+  (when magnus-permission--return-event
+    (plist-put magnus-permission--return-event :handled t))
+  ;; Switch back
+  (when (and magnus-permission--return-buffer
+             (buffer-live-p magnus-permission--return-buffer))
+    (pop-to-buffer magnus-permission--return-buffer))
+  (magnus-permission--cancel-return-timer))
+
+(defun magnus-permission--cancel-return-timer ()
+  "Cancel the return timer and clear state."
+  (when magnus-permission--return-timer
+    (cancel-timer magnus-permission--return-timer))
+  (setq magnus-permission--return-timer nil
+        magnus-permission--return-instance nil
+        magnus-permission--return-event nil
+        magnus-permission--return-state nil
+        magnus-permission--return-start nil
+        magnus-permission--return-buffer nil))
 
 ;;; Formatting helpers
 
@@ -208,6 +281,23 @@ BEHAVIOR is \"allow\" or \"deny\".  MESSAGE is optional denial reason."
     ("Grep"
      (let ((pattern (alist-get 'pattern tool-input)))
        (if pattern (format "Grep: %s" pattern) "Grep")))
+    ("AskUserQuestion"
+     (let* ((questions (alist-get 'questions tool-input))
+            (first-q (and (vectorp questions) (> (length questions) 0)
+                          (aref questions 0)))
+            (text (and first-q (alist-get 'question first-q))))
+       (if text (format "Question: %s" (truncate-string-to-width text 60 nil nil "..."))
+         "AskUserQuestion")))
+    ("Task"
+     (let ((desc (alist-get 'description tool-input)))
+       (if desc (format "Task: %s" (truncate-string-to-width desc 60 nil nil "..."))
+         "Task")))
+    ("WebFetch"
+     (let ((url (alist-get 'url tool-input)))
+       (if url (format "WebFetch: %s" url) "WebFetch")))
+    ("WebSearch"
+     (let ((query (alist-get 'query tool-input)))
+       (if query (format "WebSearch: %s" query) "WebSearch")))
     (_ tool-name)))
 
 (defun magnus-permission--format-tool-detail (tool-name tool-input)
@@ -232,44 +322,63 @@ BEHAVIOR is \"allow\" or \"deny\".  MESSAGE is optional denial reason."
        (when-let ((file (or (alist-get 'file_path tool-input)
                             (alist-get 'filePath tool-input))))
          (push (format "  File: %s" file) lines)))
+      ("AskUserQuestion"
+       (when-let ((questions (alist-get 'questions tool-input)))
+         (seq-doseq (q (if (vectorp questions) questions (vector questions)))
+           (when-let ((text (alist-get 'question q)))
+             (push (format "  Question: %s" text) lines))
+           (when-let ((options (alist-get 'options q)))
+             (let ((n 1))
+               (seq-doseq (opt options)
+                 (let ((label (alist-get 'label opt))
+                       (desc (alist-get 'description opt)))
+                   (push (format "    %d. %s%s" n (or label "")
+                                 (if desc (format " — %s" desc) ""))
+                         lines))
+                 (setq n (1+ n))))))))
+      ("Task"
+       (when-let ((desc (alist-get 'description tool-input)))
+         (push (format "  Description: %s" desc) lines))
+       (when-let ((st (alist-get 'subagent_type tool-input)))
+         (push (format "  Agent: %s" st) lines))
+       (when-let ((prompt (alist-get 'prompt tool-input)))
+         (push (format "  Prompt: %s"
+                       (if (> (length prompt) 200)
+                           (concat (substring prompt 0 200) "...")
+                         prompt))
+               lines)))
+      ("WebFetch"
+       (when-let ((url (alist-get 'url tool-input)))
+         (push (format "  URL: %s" url) lines))
+       (when-let ((prompt (alist-get 'prompt tool-input)))
+         (push (format "  Prompt: %s" prompt) lines)))
+      ("WebSearch"
+       (when-let ((query (alist-get 'query tool-input)))
+         (push (format "  Query: %s" query) lines)))
       (_
-       ;; Generic: show all input keys
+       ;; Generic: show all input keys with string/number values
        (when (listp tool-input)
          (dolist (pair tool-input)
-           (when (and (consp pair) (stringp (cdr pair)))
-             (push (format "  %s: %s"
-                           (car pair)
-                           (if (> (length (cdr pair)) 100)
-                               (concat (substring (cdr pair) 0 100) "...")
-                             (cdr pair)))
-                   lines))))))
+           (when (consp pair)
+             (let* ((val (cdr pair))
+                    (val-str (cond ((stringp val) val)
+                                   ((numberp val) (number-to-string val))
+                                   (t nil))))
+               (when val-str
+                 (push (format "  %s: %s"
+                               (car pair)
+                               (if (> (length val-str) 100)
+                                   (concat (substring val-str 0 100) "...")
+                                 val-str))
+                       lines))))))))
     (mapconcat #'identity (nreverse lines) "\n")))
-
-;;; Respond to a pending request
-
-(defun magnus-permission-respond (request-file behavior)
-  "Respond to the pending request identified by REQUEST-FILE.
-BEHAVIOR is \"allow\" or \"deny\"."
-  (when-let ((plist (gethash request-file magnus-permission--pending)))
-    (let ((response-file (plist-get plist :response-file)))
-      (magnus-permission--write-response
-       response-file behavior
-       (when (equal behavior "deny") "Denied by user via Magnus"))
-      (remhash request-file magnus-permission--pending))))
 
 ;;; Cleanup
 
-(defun magnus-permission-cleanup-pending ()
-  "Deny all pending permission requests.
-Called when the command buffer is killed to avoid hanging hook scripts."
-  (maphash (lambda (_request-file plist)
-             (condition-case nil
-                 (magnus-permission--write-response
-                  (plist-get plist :response-file) "deny"
-                  "Magnus command buffer closed")
-               (error nil)))
-           magnus-permission--pending)
-  (clrhash magnus-permission--pending))
+(defun magnus-permission-cleanup ()
+  "Cancel any active return timer.
+Called when the command buffer is killed."
+  (magnus-permission--cancel-return-timer))
 
 ;;; Hook command (inline — no external script file needed)
 

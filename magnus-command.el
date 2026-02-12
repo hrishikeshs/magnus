@@ -34,9 +34,8 @@
 (declare-function magnus-process-read-jsonl-lines "magnus-process")
 (declare-function vterm-send-string "vterm")
 (declare-function vterm-send-return "vterm")
-(declare-function magnus-permission-respond "magnus-permission")
+(declare-function magnus-permission-cleanup "magnus-permission")
 (declare-function magnus-permission--format-tool-detail "magnus-permission")
-(declare-function magnus-permission-cleanup-pending "magnus-permission")
 
 ;; Attention queue variable (defined in magnus-attention.el)
 (defvar magnus-attention-queue)
@@ -566,23 +565,16 @@ Otherwise, send as a free-form message."
 (defun magnus-command--send-to-active (text)
   "Send TEXT as a response to the active prompt's agent."
   (let* ((event magnus-command--active-prompt)
-         (type (plist-get event :type))
          (id (plist-get event :instance-id))
          (name (plist-get event :instance-name))
          (instance (when id (magnus-instances-get id))))
-    (if (eq type 'permission-request)
-        ;; Hook-based: write response file
-        (let* ((request-file (plist-get event :request-file))
-               (behavior (if (member (downcase text) '("y" "yes" "1" "allow"))
-                             "allow" "deny")))
-          (magnus-permission-respond request-file behavior))
-      ;; Legacy vterm-based: send keystrokes
-      (when instance
-        (when-let ((buffer (magnus-instance-buffer instance)))
-          (when (buffer-live-p buffer)
-            (with-current-buffer buffer
-              (vterm-send-string text)
-              (vterm-send-return))))))
+    ;; Legacy vterm-based: send keystrokes
+    (when instance
+      (when-let ((buffer (magnus-instance-buffer instance)))
+        (when (buffer-live-p buffer)
+          (with-current-buffer buffer
+            (vterm-send-string text)
+            (vterm-send-return)))))
     ;; Mark prompt as handled
     (plist-put event :handled t)
     (plist-put event :response text)
@@ -723,25 +715,18 @@ Optional INSTANCE-ID is attached as a text property for navigation."
                       'magnus-command-instance-id instance-id)))
 
 (defun magnus-command--render-prompt-header (event active-hint)
-  "Insert the shared header for prompt/permission-request EVENT.
+  "Insert the shared header for legacy vterm prompt EVENT.
 ACTIVE-HINT is the string shown after the label when active (e.g. \" ← active\")."
   (let* ((ts (magnus-command--format-timestamp (plist-get event :timestamp)))
          (name (plist-get event :instance-name))
          (handled (plist-get event :handled))
          (active (eq event magnus-command--active-prompt))
-         (type (plist-get event :type))
          (face (cond (handled 'magnus-command-prompt-handled)
                      (active 'magnus-command-prompt-active)
                      (t 'magnus-command-prompt-queued)))
          (label (cond
-                 (handled
-                  (if (eq type 'permission-request)
-                      (format "(%s: %s)"
-                              (or (plist-get event :response) "?")
-                              (or (plist-get event :tool-name) "?"))
-                    (format "(approved: %s)" (or (plist-get event :response) "?"))))
-                 (active
-                  (if (eq type 'permission-request) "PERMISSION" "PROMPT"))
+                 (handled (format "(approved: %s)" (or (plist-get event :response) "?")))
+                 (active "PROMPT")
                  (t "queued"))))
     (magnus-command--insert-ts-agent ts name (plist-get event :instance-id))
     (insert " ")
@@ -767,13 +752,19 @@ ACTIVE-HINT is the string shown after the label when active (e.g. \" ← active\
                                    'face 'magnus-command-prompt-context)))
            (insert "  " (or text "")))))
 
-      ('permission-request
-       (magnus-command--render-prompt-header event " ← respond y/n")
-       (let ((handled (plist-get event :handled))
-             (tool-name (plist-get event :tool-name))
-             (tool-input (plist-get event :tool-input)))
+      ('vterm-prompt
+       (let ((tool-name (plist-get event :tool-name))
+             (tool-input (plist-get event :tool-input))
+             (handled (plist-get event :handled)))
+         (magnus-command--insert-ts-agent ts name (plist-get event :instance-id))
+         (insert " ")
          (if handled
-             (insert "  " (or tool-name ""))
+             (insert (propertize (format "(%s done)" (or tool-name "?"))
+                                 'face 'magnus-command-prompt-handled))
+           (insert (propertize (format "PROMPT: %s (in vterm)" (or tool-name "?"))
+                               'face 'magnus-command-prompt-active)))
+         (insert "\n")
+         (unless handled
            (insert (propertize
                     (magnus-permission--format-tool-detail tool-name tool-input)
                     'face 'magnus-command-prompt-context)))))
@@ -947,24 +938,15 @@ Remove stale prompts and activate next if needed."
           (magnus-command-refresh))))))
 
 (defun magnus-command--prompt-stale-p (event)
-  "Return non-nil if EVENT's prompt is no longer active."
-  (let ((type (plist-get event :type)))
-    (if (eq type 'permission-request)
-        ;; Hook-based: stale if response file was already written
-        ;; or if request file no longer exists
-        (let ((req-file (plist-get event :request-file))
-              (resp-file (plist-get event :response-file)))
-          (or (and resp-file (file-exists-p resp-file))
-              (and req-file (not (file-exists-p req-file)))))
-      ;; Legacy vterm-based
-      (let* ((id (plist-get event :instance-id))
-             (instance (when id (magnus-instances-get id))))
-        (or (null instance)
-            (let ((buffer (magnus-instance-buffer instance)))
-              (or (null buffer)
-                  (not (buffer-live-p buffer))
-                  (not (with-current-buffer buffer
-                         (magnus-attention--buffer-has-prompt-p))))))))))
+  "Return non-nil if EVENT's legacy vterm prompt is no longer active."
+  (let* ((id (plist-get event :instance-id))
+         (instance (when id (magnus-instances-get id))))
+    (or (null instance)
+        (let ((buffer (magnus-instance-buffer instance)))
+          (or (null buffer)
+              (not (buffer-live-p buffer))
+              (not (with-current-buffer buffer
+                     (magnus-attention--buffer-has-prompt-p))))))))
 
 ;;; JSONL polling for agent replies
 
@@ -1125,9 +1107,9 @@ If MAX-LENGTH is nil, return TEXT unchanged."
   (magnus-command--unregister-hooks)
   (magnus-command--stop-reconcile-timer)
   (magnus-command--stop-poll-timer)
-  ;; Deny any pending hook-based permission requests so scripts don't hang
+  ;; Cancel any active permission return timer
   (condition-case nil
-      (magnus-permission-cleanup-pending)
+      (magnus-permission-cleanup)
     (error nil)))
 
 (add-hook 'kill-buffer-hook
