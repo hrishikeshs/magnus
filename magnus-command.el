@@ -26,6 +26,7 @@
 (declare-function magnus-attention--last-line "magnus-attention")
 (declare-function magnus-attention-release "magnus-attention")
 (declare-function magnus-process-running-p "magnus-process")
+(declare-function magnus-process--session-jsonl-path "magnus-process")
 (declare-function vterm-send-string "vterm")
 (declare-function vterm-send-return "vterm")
 
@@ -34,6 +35,12 @@
 (defcustom magnus-command-show-auto-approved t
   "Show auto-approved prompts in the command buffer."
   :type 'boolean
+  :group 'magnus)
+
+(defcustom magnus-command-reply-max-length 200
+  "Maximum characters to show for agent replies.
+Longer replies are truncated with [...]."
+  :type 'integer
   :group 'magnus)
 
 ;;; Faces
@@ -131,6 +138,11 @@
   "Background for user messages (warm tint)."
   :group 'magnus)
 
+(defface magnus-command-agent-reply
+  '((t :inherit default))
+  "Face for agent reply text in the command buffer."
+  :group 'magnus)
+
 ;;; Buffer-local variables
 
 (defvar-local magnus-command--events nil
@@ -157,6 +169,12 @@
 (defvar-local magnus-command--agent-bg-next 0
   "Next index into the background face palette.")
 
+(defvar-local magnus-command--jsonl-positions (make-hash-table :test 'equal)
+  "Hash table: instance-id -> number of JSONL lines already processed.")
+
+(defvar-local magnus-command--jsonl-uuids (make-hash-table :test 'equal)
+  "Hash table: uuid -> t for already-shown JSONL entries.")
+
 ;;; Global variables
 
 (defvar magnus-command--seen-prompts (make-hash-table :test 'equal)
@@ -164,6 +182,9 @@
 
 (defvar magnus-command--reconcile-timer nil
   "30s timer for stale prompt cleanup.")
+
+(defvar magnus-command--poll-timer nil
+  "5s timer for JSONL polling.")
 
 ;;; Background color assignment
 
@@ -242,6 +263,7 @@ in the input area at the bottom.
         (magnus-command--setup-buffer)
         (magnus-command--register-hooks)
         (magnus-command--start-reconcile-timer)
+        (magnus-command--start-poll-timer)
         (magnus-command--snapshot-instances)))
     (pop-to-buffer buffer)))
 
@@ -684,6 +706,16 @@ Otherwise, send as a free-form message."
        (insert ": ")
        (insert (or text "")))
 
+      ('agent-reply
+       (insert (propertize ts 'face 'magnus-command-timestamp))
+       (insert "  ")
+       (insert (propertize name
+                           'face 'magnus-command-agent-name
+                           'magnus-command-instance-id (plist-get event :instance-id)))
+       (insert ": ")
+       (insert (propertize (or text "")
+                           'face 'magnus-command-agent-reply)))
+
       ('status-change
        (insert (propertize ts 'face 'magnus-command-timestamp))
        (insert "  ")
@@ -840,12 +872,119 @@ Remove stale prompts and activate next if needed."
               (not (with-current-buffer buffer
                      (magnus-attention--last-line))))))))
 
+;;; JSONL polling for agent replies
+
+(defun magnus-command--start-poll-timer ()
+  "Start the 5s JSONL poll timer."
+  (magnus-command--stop-poll-timer)
+  (setq magnus-command--poll-timer
+        (run-with-timer 5 5 #'magnus-command--poll-jsonl)))
+
+(defun magnus-command--stop-poll-timer ()
+  "Stop the JSONL poll timer."
+  (when magnus-command--poll-timer
+    (cancel-timer magnus-command--poll-timer)
+    (setq magnus-command--poll-timer nil)))
+
+(defun magnus-command--poll-jsonl ()
+  "Poll JSONL files for new assistant replies from all instances."
+  (when-let ((buf (get-buffer magnus-command-buffer-name)))
+    (with-current-buffer buf
+      (dolist (instance (magnus-instances-list))
+        (when (magnus-instance-session-id instance)
+          (condition-case nil
+              (magnus-command--poll-instance instance)
+            (error nil)))))))
+
+(defun magnus-command--poll-instance (instance)
+  "Poll JSONL for new assistant replies from INSTANCE."
+  (let* ((id (magnus-instance-id instance))
+         (name (magnus-instance-name instance))
+         (directory (magnus-instance-directory instance))
+         (session-id (magnus-instance-session-id instance))
+         (jsonl-file (magnus-process--session-jsonl-path directory session-id)))
+    (when (and jsonl-file (file-exists-p jsonl-file))
+      (let* ((all-lines (magnus-command--read-jsonl-lines jsonl-file))
+             (prev-count (or (gethash id magnus-command--jsonl-positions) 0))
+             (new-lines (nthcdr prev-count all-lines))
+             (parsed-count 0))
+        (catch 'partial-line
+          (dolist (line new-lines)
+            (condition-case nil
+                (let ((entry (json-parse-string line :object-type 'alist)))
+                  (magnus-command--process-jsonl-entry entry id name)
+                  (setq parsed-count (1+ parsed-count)))
+              (error (throw 'partial-line nil)))))
+        (puthash id (+ prev-count parsed-count)
+                 magnus-command--jsonl-positions)))))
+
+(defun magnus-command--read-jsonl-lines (file)
+  "Read all lines from JSONL FILE."
+  (with-temp-buffer
+    (insert-file-contents file)
+    (split-string (buffer-string) "\n" t)))
+
+(defun magnus-command--process-jsonl-entry (entry instance-id instance-name)
+  "Process a parsed JSONL ENTRY, creating an event if it's a reply."
+  (let ((type (alist-get 'type entry))
+        (uuid (alist-get 'uuid entry)))
+    (when (and (equal type "assistant")
+               uuid
+               (not (gethash uuid magnus-command--jsonl-uuids)))
+      (puthash uuid t magnus-command--jsonl-uuids)
+      (let ((text (magnus-command--extract-reply-text entry)))
+        (when (and text (not (string-empty-p text)))
+          (let ((timestamp (magnus-command--parse-jsonl-timestamp
+                            (alist-get 'timestamp entry))))
+            (magnus-command--add-event
+             (list :type 'agent-reply
+                   :timestamp timestamp
+                   :instance-id instance-id
+                   :instance-name instance-name
+                   :text (magnus-command--truncate
+                          text magnus-command-reply-max-length)
+                   :handled t))))))))
+
+(defun magnus-command--extract-reply-text (entry)
+  "Extract text content from a JSONL assistant ENTRY.
+Returns concatenated text blocks, or nil."
+  (let ((message (alist-get 'message entry)))
+    (when message
+      (let ((content (alist-get 'content message)))
+        (when (vectorp content)
+          (let ((texts nil))
+            (seq-doseq (block content)
+              (when (equal (alist-get 'type block) "text")
+                (let ((text (alist-get 'text block)))
+                  (when (and text (stringp text)
+                             (not (string-empty-p (string-trim text))))
+                    (push text texts)))))
+            (when texts
+              (string-trim (mapconcat #'identity (nreverse texts) "")))))))))
+
+(defun magnus-command--truncate (text max-length)
+  "Truncate TEXT to MAX-LENGTH, appending [...] if needed."
+  (if (> (length text) max-length)
+      (concat (substring text 0 max-length) " [...]")
+    text))
+
+(defun magnus-command--parse-jsonl-timestamp (ts)
+  "Parse an ISO timestamp TS to a float-time, or return current time."
+  (if (and ts (stringp ts))
+      (condition-case nil
+          (float-time (encode-time (parse-time-string
+                                    (replace-regexp-in-string "T" " "
+                                     (replace-regexp-in-string "Z" "" ts)))))
+        (error (float-time)))
+    (float-time)))
+
 ;;; Cleanup
 
 (defun magnus-command--cleanup ()
   "Clean up hooks and timers."
   (magnus-command--unregister-hooks)
-  (magnus-command--stop-reconcile-timer))
+  (magnus-command--stop-reconcile-timer)
+  (magnus-command--stop-poll-timer))
 
 (add-hook 'kill-buffer-hook
           (lambda ()
