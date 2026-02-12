@@ -206,8 +206,10 @@ Logs a `vterm-prompt' event and starts a return timer."
   (magnus-permission--cancel-return-timer)
   ;; Log the event
   (let ((event (magnus-permission--log-vterm-prompt instance tool-name tool-input)))
-    ;; Save return state
-    (setq magnus-permission--return-buffer (current-buffer)
+    ;; Save return state (return to command buffer, not *server*)
+    (setq magnus-permission--return-buffer
+          (get-buffer (or (bound-and-true-p magnus-command-buffer-name)
+                          "*magnus-command*"))
           magnus-permission--return-instance instance
           magnus-permission--return-event event
           magnus-permission--return-state 'waiting
