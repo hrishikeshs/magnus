@@ -720,6 +720,13 @@ continuation style (no header)."
                              'face 'magnus-command-system
                              'magnus-command-instance-id (plist-get event :instance-id)))))
 
+      ('stream-question
+       ;; Agent is asking a question — show prominently
+       (magnus-command--insert-ts-agent ts name (plist-get event :instance-id))
+       (insert " ")
+       (insert (propertize "asks: " 'face 'font-lock-warning-face))
+       (insert (propertize (or text "?") 'face '(:weight bold))))
+
       ('status-change
        ;; Centered divider style
        (let* ((msg (format " %s %s " name (or text "")))

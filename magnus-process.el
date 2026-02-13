@@ -787,12 +787,16 @@ PARTIAL is the incomplete line from previous call.  Returns new partial."
                      ("tool_use"
                       (let ((tool-name (alist-get 'name block))
                             (tool-input (alist-get 'input block)))
-                        (insert
-                         (propertize
-                          (format "  [%s] %s\n" tool-name
-                                  (magnus-process--stream-tool-summary
-                                   tool-name tool-input))
-                          'face 'font-lock-type-face)))))))))
+                        (if (string= tool-name "AskUserQuestion")
+                            ;; Special rendering for questions
+                            (magnus-process--stream-render-question
+                             instance tool-input)
+                          (insert
+                           (propertize
+                            (format "  [%s] %s\n" tool-name
+                                    (magnus-process--stream-tool-summary
+                                     tool-name tool-input))
+                            'face 'font-lock-type-face))))))))))
             ("user"
              ;; Tool results — brief indicator
              (when-let ((content (alist-get 'content
@@ -842,6 +846,41 @@ PARTIAL is the incomplete line from previous call.  Returns new partial."
     ("Grep" (or (alist-get 'pattern tool-input) ""))
     ("Task" (or (alist-get 'description tool-input) ""))
     (_ "")))
+
+(defun magnus-process--stream-render-question (instance tool-input)
+  "Render an AskUserQuestion TOOL-INPUT in the output buffer.
+Also notifies the command buffer so the user sees the question.
+INSTANCE is the stream agent asking."
+  (let ((questions (alist-get 'questions tool-input))
+        (full-text ""))
+    (when (and questions (vectorp questions))
+      (insert (propertize "\n  === Question ===\n" 'face 'font-lock-warning-face))
+      (seq-doseq (q questions)
+        (let ((question (alist-get 'question q))
+              (options (alist-get 'options q)))
+          (when question
+            (insert (propertize (format "  %s\n" question)
+                                'face '(:weight bold)))
+            (setq full-text (concat full-text question)))
+          (when (and options (vectorp options))
+            (let ((idx 1))
+              (seq-doseq (opt options)
+                (let ((label (alist-get 'label opt))
+                      (desc (alist-get 'description opt)))
+                  (insert (propertize (format "    %d. %s" idx label)
+                                      'face 'font-lock-constant-face))
+                  (when desc
+                    (insert (propertize (format " — %s" desc)
+                                        'face 'font-lock-comment-face)))
+                  (insert "\n")
+                  (setq idx (1+ idx))))))
+          (insert "\n")))
+      (insert (propertize "  (reply via command buffer to answer)\n\n"
+                          'face 'font-lock-comment-face))
+      ;; Notify command buffer
+      (magnus-process--stream-notify
+       instance 'stream-question
+       :text full-text))))
 
 (defun magnus-process--stream-sentinel-fn (instance)
   "Return a process sentinel for stream INSTANCE."
