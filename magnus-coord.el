@@ -101,14 +101,32 @@ with agent output in vterm."
 (defvar magnus-coord--reminder-index 0
   "Index into the rotating reminder templates.")
 
+(defvar magnus-coord--last-contact (make-hash-table :test 'equal)
+  "Hash table: instance-id -> float-time of last user message.
+Agents contacted recently are skipped by periodic nudges.")
+
+(defun magnus-coord-record-contact (instance-id)
+  "Record that INSTANCE-ID was just contacted by the user.
+Suppresses periodic nudges for this agent until the next interval."
+  (puthash instance-id (float-time) magnus-coord--last-contact))
+
+(defun magnus-coord--recently-contacted-p (instance)
+  "Return non-nil if INSTANCE was contacted within the reminder interval."
+  (let* ((id (magnus-instance-id instance))
+         (last (gethash id magnus-coord--last-contact))
+         (interval (or magnus-coord-reminder-interval 600)))
+    (and last (< (- (float-time) last) interval))))
+
 (defun magnus-coord--send-reminders ()
-  "Send a coordination reminder to all running instances.
+  "Send a coordination reminder to idle instances.
+Skips agents that were recently contacted by the user.
 Rotates through different messages to keep agents attentive."
   (let ((template (nth (mod magnus-coord--reminder-index
                             (length magnus-coord--reminder-templates))
                        magnus-coord--reminder-templates)))
     (dolist (instance (magnus-instances-list))
-      (when (eq (magnus-instance-status instance) 'running)
+      (when (and (eq (magnus-instance-status instance) 'running)
+                 (not (magnus-coord--recently-contacted-p instance)))
         (magnus-coord-send-message
          instance
          (format template (magnus-instance-name instance)))))

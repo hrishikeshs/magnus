@@ -30,6 +30,7 @@
 (declare-function magnus-permission-cleanup "magnus-permission")
 (declare-function magnus-permission--format-tool-detail "magnus-permission")
 (declare-function magnus-coord-add-log "magnus-coord")
+(declare-function magnus-coord-record-contact "magnus-coord")
 (declare-function projectile-mode "projectile")
 
 ;;; Customization
@@ -471,6 +472,8 @@ Otherwise, send as a free-form message via @mention or target."
                          text
                        (format "@%s %s" target-name text))))
         (magnus-coord-add-log directory "user" log-text)
+        ;; Record contact — suppresses periodic nudges for this agent
+        (magnus-coord-record-contact target-id)
         ;; Retry nudge: if the file-watcher notification got lost,
         ;; poke the agent again after a few seconds
         (magnus-command--schedule-nudge target-id 5)))
