@@ -106,19 +106,18 @@ Values are plists: (:hash STRING :last-change-time FLOAT
                magnus-health--state)
       (when (eq (magnus-instance-status instance) 'running)
         (magnus-instances-update instance :status 'stopped)))
-     ;; Process not live — but idle stream agents are OK
+     ;; Process not live
      ((not (magnus-process-running-p instance))
-      (if (and (magnus-process--stream-p instance)
-               (eq (magnus-instance-status instance) 'idle))
-          ;; Stream agent between turns — healthy
-          (puthash id (list :hash (or prev-hash "")
-                            :last-change-time now
-                            :stuck-count 0 :health 'ok)
-                   magnus-health--state)
-        ;; Actually dead
-        (puthash id (list :hash nil :last-change-time now
-                          :stuck-count 0 :health 'dead)
-                 magnus-health--state)))
+      (puthash id (list :hash nil :last-change-time now
+                        :stuck-count 0 :health 'dead)
+               magnus-health--state))
+     ;; Stream agent idle between turns — always healthy
+     ((and (magnus-process--stream-p instance)
+           (eq (magnus-instance-status instance) 'idle))
+      (puthash id (list :hash (or prev-hash "")
+                        :last-change-time now
+                        :stuck-count 0 :health 'ok)
+               magnus-health--state))
      ;; Process is live — check buffer content
      (t
       (let ((new-hash (magnus-health--compute-hash buffer)))

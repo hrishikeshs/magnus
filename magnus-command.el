@@ -727,6 +727,17 @@ continuation style (no header)."
        (insert (propertize "asks: " 'face 'font-lock-warning-face))
        (insert (propertize (or text "?") 'face '(:weight bold))))
 
+      ('stream-permission
+       ;; Permission decision for a stream agent
+       (magnus-command--insert-ts-agent ts name (plist-get event :instance-id))
+       (insert " ")
+       (let ((allowed (plist-get event :allowed)))
+         (insert (propertize (if allowed "approved: " "DENIED: ")
+                             'face (if allowed
+                                       'magnus-command-auto-approved
+                                     'font-lock-warning-face)))
+         (insert (or text ""))))
+
       ('status-change
        ;; Centered divider style
        (let* ((msg (format " %s %s " name (or text "")))
