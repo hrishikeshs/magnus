@@ -33,6 +33,7 @@
 (declare-function magnus-command--add-event "magnus-command")
 (declare-function magnus-attention--is-prompt-line-p "magnus-attention")
 (declare-function magnus-attention--tail-text "magnus-attention")
+(declare-function magnus-process--stream-p "magnus-process")
 
 (defvar magnus-command-show-auto-approved)
 (defvar magnus-command-buffer-name)
@@ -43,6 +44,14 @@
   '("Read" "Glob" "Grep" "LSP")
   "Tool names to auto-approve without prompting the user."
   :type '(repeat string)
+  :group 'magnus)
+
+(defcustom magnus-permission-auto-approve-project-write t
+  "Auto-approve Edit/Write/Bash when operating within the project directory.
+When non-nil, file edits and writes to paths under the instance's
+working directory are auto-approved.  Access outside the project
+triggers an interactive prompt."
+  :type 'boolean
   :group 'magnus)
 
 (defcustom magnus-permission-auto-approve-bash-patterns
@@ -105,15 +114,21 @@ Three outcomes:
             ;; Not a Magnus-managed instance — skip so CC shows normal dialog
             (with-temp-file response-file
               (insert "SKIP"))
-          (if (magnus-permission--auto-approve-p tool-name tool-input)
+          (if (magnus-permission--auto-approve-p tool-name tool-input instance)
               ;; Auto-approve: write response immediately
               (progn
                 (magnus-permission--write-response response-file "allow")
                 (magnus-permission--log-auto-approved instance tool-name tool-input))
-            ;; Need user input: SKIP hook and switch to agent's vterm
-            (with-temp-file response-file
-              (insert "SKIP"))
-            (magnus-permission--switch-to-vterm instance tool-name tool-input))))
+            ;; Need user input
+            (if (magnus-process--stream-p instance)
+                ;; Stream agent: prompt inline via y-or-n-p
+                (magnus-permission--prompt-inline
+                 instance tool-name tool-input response-file)
+              ;; vterm agent: SKIP hook and switch to agent's vterm
+              (with-temp-file response-file
+                (insert "SKIP"))
+              (magnus-permission--switch-to-vterm
+               instance tool-name tool-input)))))
     (error
      (message "Magnus permission error: %s" (error-message-string err))
      ;; Write SKIP on error so CC falls back to normal dialog
@@ -133,8 +148,9 @@ Three outcomes:
 
 ;;; Auto-approve
 
-(defun magnus-permission--auto-approve-p (tool-name tool-input)
-  "Return non-nil if TOOL-NAME with TOOL-INPUT should be auto-approved."
+(defun magnus-permission--auto-approve-p (tool-name tool-input &optional instance)
+  "Return non-nil if TOOL-NAME with TOOL-INPUT should be auto-approved.
+When INSTANCE is provided, also checks project-scoped rules."
   (or
    ;; Exact tool match
    (member tool-name magnus-permission-auto-approve-tools)
@@ -144,7 +160,16 @@ Three outcomes:
           (when (stringp command)
             (cl-some (lambda (pattern)
                        (string-match-p pattern command))
-                     magnus-permission-auto-approve-bash-patterns))))))
+                     magnus-permission-auto-approve-bash-patterns))))
+   ;; Project-scoped: Edit/Write within the instance's directory
+   (and magnus-permission-auto-approve-project-write
+        instance
+        (member tool-name '("Edit" "Write"))
+        (let ((file (or (alist-get 'file_path tool-input)
+                        (alist-get 'filePath tool-input))))
+          (when file
+            (file-in-directory-p (expand-file-name file)
+                                 (magnus-instance-directory instance)))))))
 
 ;;; Response writing
 
@@ -196,6 +221,33 @@ Returns the event plist so we can mark it handled later."
       (with-current-buffer buf
         (magnus-command--add-event event)))
     event))
+
+;;; Inline prompt for stream agents
+
+(defun magnus-permission--prompt-inline (instance tool-name tool-input response-file)
+  "Prompt user inline for permission from stream INSTANCE.
+Shows TOOL-NAME and TOOL-INPUT details via `y-or-n-p', writes
+the decision to RESPONSE-FILE."
+  (let* ((name (magnus-instance-name instance))
+         (summary (magnus-permission--format-tool-summary tool-name tool-input))
+         (allowed (y-or-n-p (format "[%s] %s — Allow? " name summary))))
+    (if allowed
+        (progn
+          (magnus-permission--write-response response-file "allow")
+          (magnus-permission--log-auto-approved instance tool-name tool-input))
+      (magnus-permission--write-response response-file "deny"
+                                         "Denied by user via Magnus")
+      ;; Log denial in command buffer
+      (when-let ((buf (get-buffer (or (bound-and-true-p magnus-command-buffer-name)
+                                       "*magnus-command*"))))
+        (with-current-buffer buf
+          (magnus-command--add-event
+           (list :type 'prompt
+                 :timestamp (float-time)
+                 :instance-id (magnus-instance-id instance)
+                 :instance-name name
+                 :text (format "DENIED: %s" summary)
+                 :handled t)))))))
 
 ;;; Switch-to-vterm mechanism
 

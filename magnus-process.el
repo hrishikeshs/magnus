@@ -28,6 +28,7 @@
 (defvar magnus-default-directory)
 (defvar magnus-instance-name-generator)
 (defvar magnus-buffer-name)
+(defvar magnus-stream-allowed-tools)
 
 ;; Forward declarations for stream mode (defined later in this file)
 (defvar magnus-process--stream-busy)
@@ -722,7 +723,7 @@ SESSION-ID is used for --resume if non-nil.  MESSAGE is the prompt."
   (let ((args (list "--print" message
                     "--output-format" "stream-json"
                     "--verbose"
-                    "--allowedTools" magnus-headless-allowed-tools)))
+                    "--allowedTools" magnus-stream-allowed-tools)))
     (when session-id
       (setq args (append (list "--resume" session-id) args)))
     args))

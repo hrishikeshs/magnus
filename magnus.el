@@ -93,6 +93,14 @@ only tools listed here will be available."
   :type 'string
   :group 'magnus)
 
+(defcustom magnus-stream-allowed-tools "Read Glob Grep"
+  "Space-separated list of tools pre-approved in stream mode.
+Only safe read-only tools should be listed here.  Everything
+else goes through the PermissionRequest hook, where auto-approve
+rules and interactive prompts handle the decision."
+  :type 'string
+  :group 'magnus)
+
 (defcustom magnus-buffer-name "*magnus*"
   "Name of the magnus status buffer."
   :type 'string
