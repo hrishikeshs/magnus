@@ -26,6 +26,7 @@
 (declare-function magnus-coord-open-instructions "magnus-coord")
 (declare-function magnus-health-toggle "magnus-health")
 (declare-function magnus-process-create-headless "magnus-process")
+(declare-function magnus-process-create-stream "magnus-process")
 (declare-function magnus-command "magnus-command")
 
 ;;; Main dispatch
@@ -74,7 +75,8 @@
    ("c" "In current directory" magnus-transient-create-current-dir)
    ("d" "Choose directory" magnus-transient-create-choose-dir)
    ("p" "In project root" magnus-transient-create-project-root)
-   ("h" "Headless (fire-and-forget)" magnus-transient-create-headless)])
+   ("h" "Headless (fire-and-forget)" magnus-transient-create-headless)
+   ("s" "Stream (JSON pipe)" magnus-transient-create-stream)])
 
 (defun magnus-transient-create-current-dir ()
   "Create instance in current directory."
@@ -110,6 +112,17 @@ or `default-directory'."
                   (magnus-instance-directory instance)
                 default-directory)))
     (magnus-process-create-headless prompt dir)
+    (magnus-status-refresh)))
+
+(defun magnus-transient-create-stream ()
+  "Create a stream-JSON Claude Code instance.
+Uses directory from instance at point or `default-directory'."
+  (interactive)
+  (let ((dir (if-let ((instance (ignore-errors
+                                  (magnus-status--get-instance-at-point))))
+                 (magnus-instance-directory instance)
+               default-directory)))
+    (magnus-process-create-stream dir)
     (magnus-status-refresh)))
 
 (defun magnus-transient--project-root ()

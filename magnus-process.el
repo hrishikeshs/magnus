@@ -20,12 +20,18 @@
 (require 'magnus-trace)
 
 (declare-function magnus-status-refresh "magnus-status")
+(declare-function magnus-command--add-event "magnus-command")
+(defvar magnus-command-buffer-name)
 
 ;; Variables defined in magnus.el
 (defvar magnus-claude-executable)
 (defvar magnus-default-directory)
 (defvar magnus-instance-name-generator)
 (defvar magnus-buffer-name)
+
+;; Forward declarations for stream mode (defined later in this file)
+(defvar magnus-process--stream-busy)
+(defvar magnus-process--stream-queues)
 
 ;;; Process creation
 
@@ -277,8 +283,9 @@ If FORCE is non-nil, forcefully terminate."
         (when (and process (process-live-p process))
           (if force
               (kill-process process)
-            ;; Graceful exit: SIGINT for headless, C-c for vterm
-            (if (magnus-process--headless-p instance)
+            ;; Graceful exit: SIGINT for headless/stream, C-c for vterm
+            (if (or (magnus-process--headless-p instance)
+                    (magnus-process--stream-p instance))
                 (interrupt-process process)
               (with-current-buffer buffer
                 (vterm-send-key "C-c")))))))
@@ -288,6 +295,11 @@ If FORCE is non-nil, forcefully terminate."
        (lambda ()
          (when (buffer-live-p buffer)
            (kill-buffer buffer)))))
+  ;; Clean up stream state if applicable
+  (when (magnus-process--stream-p instance)
+    (let ((id (magnus-instance-id instance)))
+      (remhash id magnus-process--stream-busy)
+      (remhash id magnus-process--stream-queues)))
   (magnus-instances-update instance :status 'stopped :buffer nil))
 
 (defun magnus-process-kill-and-remove (instance &optional force)
@@ -592,6 +604,292 @@ PARTIAL is the incomplete line from previous call.  Returns new partial."
                                  'face 'magnus-trace-separator))
              (when-let ((cost (alist-get 'cost_usd json)))
                (insert (format "Cost: $%.4f\n" cost))))))))))
+
+;;; Stream mode — per-message JSON subprocess agents
+
+(defvar magnus-process--stream-busy (make-hash-table :test 'equal)
+  "Hash table: instance-id -> t when a stream process is running.")
+
+(defvar magnus-process--stream-queues (make-hash-table :test 'equal)
+  "Hash table: instance-id -> list of queued messages (FIFO).")
+
+(define-derived-mode magnus-process-stream-mode special-mode "Stream"
+  "Major mode for stream-JSON Claude Code output buffers.
+Shows structured output from a stream agent.  Read-only;
+messages are sent via the command buffer."
+  :group 'magnus
+  (setq-local truncate-lines nil)
+  (setq-local word-wrap t))
+
+(let ((map magnus-process-stream-mode-map))
+  (define-key map (kbd "q") #'quit-window))
+
+(defun magnus-process--stream-p (instance)
+  "Return non-nil if INSTANCE is a stream-JSON agent."
+  (eq (magnus-instance-type instance) 'stream))
+
+(defun magnus-process-create-stream (&optional directory name)
+  "Create a new stream-JSON Claude Code instance.
+DIRECTORY is the working directory.  If nil, prompts for one.
+NAME is the instance name.  If nil, auto-generates one.
+Returns the new instance."
+  (interactive)
+  (let* ((dir (or directory (magnus-process--get-directory)))
+         (instance-name (or name (funcall magnus-instance-name-generator dir)))
+         (instance (magnus-instances-create dir instance-name)))
+    ;; Set type before adding (struct default is 'vterm)
+    (magnus-instances-update instance :type 'stream)
+    (magnus-instances-add instance)
+    ;; Set up coordination files and register agent
+    (magnus-coord-register-agent dir instance)
+    ;; Create the output buffer
+    (let* ((buffer-name (format "*claude-stream:%s*" instance-name))
+           (buffer (get-buffer-create buffer-name)))
+      (with-current-buffer buffer
+        (magnus-process-stream-mode)
+        (let ((inhibit-read-only t))
+          (erase-buffer)
+          (insert (propertize (format "Stream agent: %s\n" instance-name)
+                              'face 'font-lock-keyword-face))
+          (insert (propertize (format "Directory: %s\n" dir)
+                              'face 'font-lock-comment-face))
+          (insert (propertize "--- Output ---\n\n"
+                              'face 'magnus-trace-separator))))
+      (magnus-instances-update instance :buffer buffer :status 'idle))
+    ;; Send onboarding message
+    (magnus-process-send-stream
+     instance
+     (magnus-process--onboarding-message instance))
+    instance))
+
+(defun magnus-process-send-stream (instance message)
+  "Send MESSAGE to stream INSTANCE.
+If the agent is busy (process running), queue the message.
+If idle, spawn a new process with --resume."
+  (let ((id (magnus-instance-id instance)))
+    (if (gethash id magnus-process--stream-busy)
+        ;; Busy — queue the message
+        (let ((queue (gethash id magnus-process--stream-queues)))
+          (puthash id (append queue (list message))
+                   magnus-process--stream-queues)
+          (message "Magnus: queued message for %s"
+                   (magnus-instance-name instance)))
+      ;; Idle — spawn process
+      (magnus-process--spawn-stream-process instance message))))
+
+(defun magnus-process--spawn-stream-process (instance message)
+  "Spawn a `claude -p' process for stream INSTANCE with MESSAGE."
+  (let* ((id (magnus-instance-id instance))
+         (name (magnus-instance-name instance))
+         (directory (magnus-instance-directory instance))
+         (session-id (magnus-instance-session-id instance))
+         (buffer (magnus-instance-buffer instance))
+         (default-directory directory)
+         (args (magnus-process--stream-args session-id message)))
+    ;; Mark busy
+    (puthash id t magnus-process--stream-busy)
+    (magnus-instances-update instance :status 'running)
+    ;; Insert message header in output buffer
+    (when (and buffer (buffer-live-p buffer))
+      (with-current-buffer buffer
+        (let ((inhibit-read-only t))
+          (goto-char (point-max))
+          (insert (propertize (format "\n[%s] user: "
+                                      (format-time-string "%H:%M"))
+                              'face 'font-lock-comment-face))
+          (insert message "\n\n"))))
+    ;; Notify command buffer
+    (magnus-process--stream-notify
+     instance 'stream-working
+     :text (format "processing (%s)"
+                   (if session-id "resume" "new session")))
+    ;; Create process
+    (let ((partial-line ""))
+      (make-process
+       :name (format "claude-stream-%s" name)
+       :buffer buffer
+       :command (cons magnus-claude-executable args)
+       :connection-type 'pipe
+       :sentinel (magnus-process--stream-sentinel-fn instance)
+       :filter (lambda (proc output)
+                 (setq partial-line
+                       (magnus-process--stream-filter
+                        instance proc output partial-line)))))))
+
+(defun magnus-process--stream-args (session-id message)
+  "Build CLI args for a stream process.
+SESSION-ID is used for --resume if non-nil.  MESSAGE is the prompt."
+  (let ((args (list "--print" message
+                    "--output-format" "stream-json"
+                    "--verbose"
+                    "--allowedTools" magnus-headless-allowed-tools)))
+    (when session-id
+      (setq args (append (list "--resume" session-id) args)))
+    args))
+
+(defun magnus-process--stream-filter (instance proc output partial)
+  "Process stream-json OUTPUT from PROC for stream INSTANCE.
+PARTIAL is the incomplete line from previous call.  Returns new partial."
+  (let* ((combined (concat partial output))
+         (lines (split-string combined "\n"))
+         (remainder (car (last lines)))
+         (complete-lines (butlast lines)))
+    (dolist (line complete-lines)
+      (when (and (not (string-empty-p line))
+                 (string-prefix-p "{" (string-trim line)))
+        (condition-case nil
+            (let* ((json (json-parse-string (string-trim line)
+                                            :object-type 'alist))
+                   (type (alist-get 'type json)))
+              (magnus-process--stream-handle-event instance proc json type))
+          (error nil))))
+    remainder))
+
+(defun magnus-process--stream-handle-event (instance proc json type)
+  "Handle a stream-json event of TYPE for stream INSTANCE from PROC."
+  (when-let ((buf (process-buffer proc)))
+    (when (buffer-live-p buf)
+      (with-current-buffer buf
+        (let ((inhibit-read-only t))
+          (goto-char (point-max))
+          (pcase type
+            ("system"
+             ;; Capture session_id from init event
+             (when-let ((sid (alist-get 'session_id json)))
+               (unless (magnus-instance-session-id instance)
+                 (magnus-instances-update instance :session-id sid)
+                 (message "Magnus: captured session %s for %s"
+                          sid (magnus-instance-name instance)))))
+            ("assistant"
+             (when-let ((content (alist-get 'content
+                                            (alist-get 'message json))))
+               (when (vectorp content)
+                 (seq-doseq (block content)
+                   (pcase (alist-get 'type block)
+                     ("text"
+                      (let ((text (alist-get 'text block)))
+                        (insert text)
+                        ;; Notify command buffer
+                        (magnus-process--stream-notify
+                         instance 'agent-reply :text text)))
+                     ("tool_use"
+                      (let ((tool-name (alist-get 'name block))
+                            (tool-input (alist-get 'input block)))
+                        (insert
+                         (propertize
+                          (format "  [%s] %s\n" tool-name
+                                  (magnus-process--stream-tool-summary
+                                   tool-name tool-input))
+                          'face 'font-lock-type-face)))))))))
+            ("user"
+             ;; Tool results — brief indicator
+             (when-let ((content (alist-get 'content
+                                            (alist-get 'message json))))
+               (when (vectorp content)
+                 (seq-doseq (block content)
+                   (when (string= (alist-get 'type block) "tool_result")
+                     (let ((is-error (eq (alist-get 'is_error block) t)))
+                       (insert
+                        (propertize
+                         (if is-error "  [error]\n" "  [done]\n")
+                         'face (if is-error
+                                   'font-lock-warning-face
+                                 'font-lock-comment-face)))))))))
+            ("result"
+             (let ((cost (alist-get 'total_cost_usd json))
+                   (turns (alist-get 'num_turns json))
+                   (denials (alist-get 'permission_denials json)))
+               (insert
+                (propertize
+                 (format "\n--- Done (%d turn%s, $%.4f) ---\n"
+                         (or turns 0)
+                         (if (= (or turns 0) 1) "" "s")
+                         (or cost 0))
+                 'face 'magnus-trace-separator))
+               ;; Report permission denials
+               (when (and denials (> (length denials) 0))
+                 (insert
+                  (propertize
+                   (format "  Permission denied: %d tool(s)\n"
+                           (length denials))
+                   'face 'font-lock-warning-face)))
+               ;; Notify command buffer
+               (magnus-process--stream-notify
+                instance 'stream-done
+                :text (format "done (%d turn%s, $%.4f)"
+                              (or turns 0)
+                              (if (= (or turns 0) 1) "" "s")
+                              (or cost 0)))))))))))
+
+(defun magnus-process--stream-tool-summary (tool-name tool-input)
+  "Format a brief summary of TOOL-NAME with TOOL-INPUT for display."
+  (pcase tool-name
+    ((or "Bash" "Zsh")
+     (or (alist-get 'command tool-input) ""))
+    ((or "Read" "Edit" "Write")
+     (or (alist-get 'file_path tool-input)
+         (alist-get 'filePath tool-input) ""))
+    ("Glob" (or (alist-get 'pattern tool-input) ""))
+    ("Grep" (or (alist-get 'pattern tool-input) ""))
+    ("Task" (or (alist-get 'description tool-input) ""))
+    (_ "")))
+
+(defun magnus-process--stream-sentinel-fn (instance)
+  "Return a process sentinel for stream INSTANCE."
+  (lambda (proc event)
+    (let* ((id (magnus-instance-id instance))
+           (event-str (string-trim event)))
+      ;; Mark not busy
+      (remhash id magnus-process--stream-busy)
+      ;; Update status
+      (cond
+       ((string= event-str "finished")
+        (magnus-instances-update instance :status 'idle))
+       ((string-prefix-p "exited abnormally" event-str)
+        (magnus-instances-update instance :status 'idle)
+        (message "Magnus: stream process for '%s' failed: %s"
+                 (magnus-instance-name instance) event-str)
+        ;; Log error to output buffer
+        (when-let ((buf (process-buffer proc)))
+          (when (buffer-live-p buf)
+            (with-current-buffer buf
+              (let ((inhibit-read-only t))
+                (goto-char (point-max))
+                (insert (propertize
+                         (format "\n--- Error: %s ---\n" event-str)
+                         'face 'font-lock-warning-face)))))))
+       (t
+        (magnus-instances-update instance :status 'idle)))
+      ;; Check message queue — send next if any
+      (let ((queue (gethash id magnus-process--stream-queues)))
+        (when queue
+          (let ((next-msg (car queue)))
+            (puthash id (cdr queue) magnus-process--stream-queues)
+            ;; Small delay to let things settle
+            (run-with-timer
+             0.5 nil
+             (lambda ()
+               (when (magnus-instances-get id)
+                 (magnus-process--spawn-stream-process
+                  instance next-msg)))))))
+      ;; Refresh status buffer
+      (when (get-buffer magnus-buffer-name)
+        (magnus-status-refresh)))))
+
+(defun magnus-process--stream-notify (instance type &rest props)
+  "Send an event of TYPE for INSTANCE to the command buffer.
+PROPS is a plist of additional event properties."
+  (when-let ((buf (get-buffer (or (bound-and-true-p magnus-command-buffer-name)
+                                   "*magnus-command*"))))
+    (let ((event (append
+                  (list :type type
+                        :timestamp (float-time)
+                        :instance-id (magnus-instance-id instance)
+                        :instance-name (magnus-instance-name instance)
+                        :handled t)
+                  props)))
+      (with-current-buffer buf
+        (magnus-command--add-event event)))))
 
 (provide 'magnus-process)
 ;;; magnus-process.el ends here

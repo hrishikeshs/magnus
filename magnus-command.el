@@ -27,6 +27,8 @@
 (declare-function magnus-process-running-p "magnus-process")
 (declare-function magnus-process--session-jsonl-path "magnus-process")
 (declare-function magnus-process-read-jsonl-lines "magnus-process")
+(declare-function magnus-process--stream-p "magnus-process")
+(declare-function magnus-process-send-stream "magnus-process")
 (declare-function magnus-permission-cleanup "magnus-permission")
 (declare-function magnus-permission--format-tool-detail "magnus-permission")
 (declare-function magnus-coord-add-log "magnus-coord")
@@ -464,19 +466,23 @@ Otherwise, send as a free-form message via @mention or target."
                 (setq target-name (magnus-instance-name inst)))
             (user-error "Target instance no longer exists"))
         (user-error "No target — use @agent-name or C-c C-t to pick one")))
-    ;; Send via coord file — reliable, persisted, triggers @mention watcher
+    ;; Send message — route based on instance type
     (when-let ((instance (magnus-instances-get target-id)))
-      (let ((directory (magnus-instance-directory instance))
-            ;; Ensure @mention is in the log entry for the watcher
-            (log-text (if (string-match-p (format "@%s\\b" (regexp-quote target-name)) text)
-                         text
-                       (format "@%s %s" target-name text))))
-        (magnus-coord-add-log directory "user" log-text)
-        ;; Record contact — suppresses periodic nudges for this agent
-        (magnus-coord-record-contact target-id)
-        ;; Retry nudge: if the file-watcher notification got lost,
-        ;; poke the agent again after a few seconds
-        (magnus-command--schedule-nudge target-id 5)))
+      (if (magnus-process--stream-p instance)
+          ;; Stream agent: send via subprocess spawn
+          (magnus-process-send-stream instance text)
+        ;; vterm agent: coord file + nudge delivery
+        (let ((directory (magnus-instance-directory instance))
+              ;; Ensure @mention is in the log entry for the watcher
+              (log-text (if (string-match-p (format "@%s\\b" (regexp-quote target-name)) text)
+                           text
+                         (format "@%s %s" target-name text))))
+          (magnus-coord-add-log directory "user" log-text)
+          ;; Record contact — suppresses periodic nudges for this agent
+          (magnus-coord-record-contact target-id)
+          ;; Retry nudge: if the file-watcher notification got lost,
+          ;; poke the agent again after a few seconds
+          (magnus-command--schedule-nudge target-id 5))))
     ;; Log it
     (magnus-command--add-event
      (list :type 'message-sent
@@ -704,6 +710,16 @@ continuation style (no header)."
            (insert (propertize display-text
                                'face 'magnus-command-agent-reply)))))
 
+      ((or 'stream-working 'stream-done)
+       ;; Stream agent activity — render like status events
+       (let* ((label (if (eq type 'stream-working) "working" "finished"))
+              (msg (format " %s %s " name (or text label)))
+              (pad-len (max 2 (/ (- 56 (length msg)) 2)))
+              (pad (make-string pad-len ?─)))
+         (insert (propertize (concat pad msg pad)
+                             'face 'magnus-command-system
+                             'magnus-command-instance-id (plist-get event :instance-id)))))
+
       ('status-change
        ;; Centered divider style
        (let* ((msg (format " %s %s " name (or text "")))
@@ -812,7 +828,10 @@ continuation style (no header)."
             (error nil)))))))
 
 (defun magnus-command--poll-instance (instance)
-  "Poll JSONL for new assistant replies from INSTANCE."
+  "Poll JSONL for new assistant replies from INSTANCE.
+Skips stream agents — they get real-time events via process filter."
+  (when (magnus-process--stream-p instance)
+    (cl-return-from magnus-command--poll-instance))
   (let* ((id (magnus-instance-id instance))
          (name (magnus-instance-name instance))
          (directory (magnus-instance-directory instance))

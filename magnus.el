@@ -57,6 +57,7 @@
 (declare-function magnus-status "magnus-status")
 (declare-function magnus-process-create "magnus-process")
 (declare-function magnus-process-create-headless "magnus-process")
+(declare-function magnus-process-create-stream "magnus-process")
 (declare-function magnus-health-start "magnus-health")
 (declare-function magnus-permission-ensure-hook "magnus-permission")
 
@@ -185,6 +186,16 @@ The agent runs to completion and exits."
   (interactive "sTask prompt: ")
   (magnus--ensure-initialized)
   (magnus-process-create-headless prompt directory name))
+
+;;;###autoload
+(defun magnus-create-stream-instance (&optional directory name)
+  "Create a stream-JSON Claude Code instance.
+DIRECTORY is the working directory.  If nil, prompts for one.
+NAME is the instance name.  If nil, auto-generates one.
+The agent communicates via JSON subprocess pipes — no vterm needed."
+  (interactive)
+  (magnus--ensure-initialized)
+  (magnus-process-create-stream directory name))
 
 (provide 'magnus)
 ;;; magnus.el ends here
