@@ -703,13 +703,13 @@ If idle, spawn a new process with --resume."
      instance 'stream-working
      :text (format "processing (%s)"
                    (if session-id "resume" "new session")))
-    ;; Create process
+    ;; Create process (pty required — claude buffers stdout on pipes)
     (let ((partial-line ""))
       (make-process
        :name (format "claude-stream-%s" name)
        :buffer buffer
        :command (cons magnus-claude-executable args)
-       :connection-type 'pipe
+       :connection-type 'pty
        :sentinel (magnus-process--stream-sentinel-fn instance)
        :filter (lambda (proc output)
                  (setq partial-line
