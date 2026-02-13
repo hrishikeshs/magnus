@@ -63,12 +63,13 @@ Older entries are trimmed automatically.  Set to nil to disable."
 ;;; Sending messages to agents
 
 (defun magnus-coord-send-message (instance message)
-  "Send MESSAGE to INSTANCE's vterm buffer as user input."
+  "Send MESSAGE to INSTANCE's vterm buffer as user input.
+Text and newline are sent as a single string to avoid interleaving
+with agent output in vterm."
   (when-let ((buffer (magnus-instance-buffer instance)))
     (when (buffer-live-p buffer)
       (with-current-buffer buffer
-        (vterm-send-string message)
-        (vterm-send-return)))))
+        (vterm-send-string (concat message "\n"))))))
 
 ;;; Periodic reminders
 

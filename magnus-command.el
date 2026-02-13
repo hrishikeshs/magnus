@@ -29,6 +29,7 @@
 (declare-function magnus-process-read-jsonl-lines "magnus-process")
 (declare-function magnus-permission-cleanup "magnus-permission")
 (declare-function magnus-permission--format-tool-detail "magnus-permission")
+(declare-function projectile-mode "projectile")
 
 ;;; Customization
 
@@ -42,6 +43,20 @@
 Set to nil for no truncation, or an integer to truncate with [...]."
   :type '(choice (const :tag "No limit" nil)
                  (integer :tag "Max characters"))
+  :group 'magnus)
+
+(defcustom magnus-command-reply-max-lines 6
+  "Maximum lines to show for agent replies.
+Longer replies are truncated with a [...N more lines] indicator.
+Set to nil for no limit."
+  :type '(choice (const :tag "No limit" nil)
+                 (integer :tag "Max lines"))
+  :group 'magnus)
+
+(defcustom magnus-command-group-interval 120
+  "Seconds within which consecutive events from the same agent are grouped.
+Set to 0 to disable grouping."
+  :type 'integer
   :group 'magnus)
 
 ;;; Faces
@@ -224,13 +239,16 @@ Set to nil for no truncation, or an integer to truncate with [...]."
   "Major mode for the magnus command buffer.
 
 A group-chat style interface for interacting with Claude Code instances.
-Permission prompts appear in a chronological stream; type responses
-in the input area at the bottom.
+Events appear in a chronological stream; type messages in the input
+area at the bottom.  Use @agent-name to pick a target.
 
 \\{magnus-command-mode-map}"
   :group 'magnus
   (setq-local truncate-lines nil)
   (setq-local word-wrap t)
+  ;; Disable projectile — its C-c bindings conflict with ours
+  (when (bound-and-true-p projectile-mode)
+    (projectile-mode -1))
   (add-hook 'post-command-hook #'magnus-command--keep-cursor-in-input nil t))
 
 ;;; Entry point
@@ -255,9 +273,6 @@ in the input area at the bottom.
   "Initialize the command buffer layout."
   (let ((inhibit-read-only t))
     (erase-buffer)
-    ;; Header
-    (insert (propertize "Magnus Command Buffer" 'face 'magnus-command-agent-name))
-    (insert "\n\n")
     ;; Separator
     (magnus-command--insert-separator)
     ;; Input area starts here
@@ -315,8 +330,14 @@ in the input area at the bottom.
 ;;; Header-line
 
 (defun magnus-command--header-line ()
-  "Return the header-line string."
-  " Magnus Command Buffer")
+  "Return the header-line string with agent count and target."
+  (let* ((agents (length (magnus-instances-list)))
+         (target (when magnus-command--target
+                   (when-let ((inst (magnus-instances-get magnus-command--target)))
+                     (magnus-instance-name inst)))))
+    (format " Magnus  [%d agent%s]%s"
+            agents (if (= agents 1) "" "s")
+            (if target (format "  -> %s" target) ""))))
 
 ;;; Hook registration
 
@@ -422,16 +443,16 @@ Otherwise, send as a free-form message via @mention or target."
 (defun magnus-command--send-free-form (text)
   "Send TEXT as a free-form message, parsing @mention or using target."
   (let (target-id target-name)
-    ;; Try to parse @agent-name at start
-    (if (string-match "^@\\([a-zA-Z][-a-zA-Z0-9_]*\\)\\s-+" text)
+    ;; Try to parse @agent-name anywhere in the message
+    (if (string-match "@\\([a-zA-Z][-a-zA-Z0-9_]*\\)" text)
         (let* ((mention-name (match-string 1 text))
-               (msg (substring text (match-end 0)))
                (instance (magnus-instances-get-by-name mention-name)))
           (if instance
               (progn
                 (setq target-id (magnus-instance-id instance))
                 (setq target-name mention-name)
-                (setq text msg))
+                ;; Sticky target: future messages go to this agent
+                (setq magnus-command--target target-id))
             (user-error "No instance named '%s'" mention-name)))
       ;; Use stored target
       (if magnus-command--target
@@ -507,13 +528,48 @@ Otherwise, send as a free-form message via @mention or target."
       (insert user-text)
       (magnus-command--apply-read-only))))
 
+;;; Grouping and truncation helpers
+
+(defun magnus-command--same-group-p (event prev-event)
+  "Return non-nil if EVENT should be grouped with PREV-EVENT.
+Events group when they share the same agent, have compatible types,
+and are within `magnus-command-group-interval' seconds."
+  (and prev-event
+       (> magnus-command-group-interval 0)
+       (let ((id (plist-get event :instance-id))
+             (prev-id (plist-get prev-event :instance-id))
+             (type (plist-get event :type))
+             (prev-type (plist-get prev-event :type))
+             (ts (plist-get event :timestamp))
+             (prev-ts (plist-get prev-event :timestamp)))
+         (and id prev-id
+              (string= id prev-id)
+              (eq type prev-type)
+              (memq type '(agent-reply auto-approved vterm-prompt))
+              (< (abs (- ts prev-ts)) magnus-command-group-interval)))))
+
+(defun magnus-command--truncate-lines (text max-lines)
+  "Truncate TEXT to MAX-LINES, appending [...N more lines] if needed.
+If MAX-LINES is nil, return TEXT unchanged."
+  (if (null max-lines)
+      text
+    (let* ((lines (split-string text "\n"))
+           (total (length lines)))
+      (if (<= total max-lines)
+          text
+        (concat (mapconcat #'identity (seq-take lines max-lines) "\n")
+                (propertize (format "\n  [...%d more lines]" (- total max-lines))
+                            'face 'font-lock-comment-face))))))
+
 ;;; Rendering
 
 (defun magnus-command--append-event (event)
   "Insert EVENT text just above the separator line."
   (when-let ((buf (get-buffer magnus-command-buffer-name)))
     (with-current-buffer buf
-      (let ((inhibit-read-only t))
+      (let ((inhibit-read-only t)
+            ;; Previous event for grouping (cadr because event was already pushed)
+            (prev-event (cadr magnus-command--events)))
         (save-excursion
           ;; Find the separator
           (goto-char (point-min))
@@ -524,7 +580,7 @@ Otherwise, send as a free-form message via @mention or target."
               (beginning-of-line)
               ;; Insert event text before separator
               (let ((start (point)))
-                (magnus-command--render-event event)
+                (magnus-command--render-event event prev-event)
                 (insert "\n")
                 (magnus-command--apply-bg-overlay event start (point))))))
         ;; Update marker and read-only
@@ -551,12 +607,15 @@ Optional INSTANCE-ID is attached as a text property for navigation."
     (insert (propertize label 'face 'magnus-command-prompt-handled))
     (insert "\n")))
 
-(defun magnus-command--render-event (event)
-  "Insert formatted text for EVENT at point."
+(defun magnus-command--render-event (event &optional prev-event)
+  "Insert formatted text for EVENT at point.
+When PREV-EVENT is provided and grouping applies, render in
+continuation style (no header)."
   (let ((type (plist-get event :type))
         (ts (magnus-command--format-timestamp (plist-get event :timestamp)))
         (name (plist-get event :instance-name))
-        (text (plist-get event :text)))
+        (text (plist-get event :text))
+        (grouped (magnus-command--same-group-p event prev-event)))
     (pcase type
       ('prompt
        (magnus-command--render-prompt-header event)
@@ -566,26 +625,37 @@ Optional INSTANCE-ID is attached as a text property for navigation."
        (let ((tool-name (plist-get event :tool-name))
              (tool-input (plist-get event :tool-input))
              (handled (plist-get event :handled)))
-         (magnus-command--insert-ts-agent ts name (plist-get event :instance-id))
-         (insert " ")
-         (if handled
-             (insert (propertize (format "(%s done)" (or tool-name "?"))
-                                 'face 'magnus-command-prompt-handled))
-           (insert (propertize (format "PROMPT: %s (in vterm)" (or tool-name "?"))
-                               'face 'magnus-command-prompt-active)))
-         (insert "\n")
-         (unless handled
-           (insert (propertize
-                    (magnus-permission--format-tool-detail tool-name tool-input)
-                    'face 'magnus-command-prompt-context)))))
+         (if grouped
+             ;; Continuation: just tool info
+             (insert (propertize (format "  %s%s" (or tool-name "?")
+                                         (if handled "" " (in vterm)"))
+                                 'face (if handled
+                                            'magnus-command-prompt-handled
+                                          'magnus-command-prompt-context)))
+           ;; Full header
+           (magnus-command--insert-ts-agent ts name (plist-get event :instance-id))
+           (insert " ")
+           (if handled
+               (insert (propertize (format "(%s done)" (or tool-name "?"))
+                                   'face 'magnus-command-prompt-handled))
+             (insert (propertize (format "PROMPT: %s (in vterm)" (or tool-name "?"))
+                                 'face 'magnus-command-prompt-context)))
+           (insert "\n")
+           (unless handled
+             (insert (propertize
+                      (magnus-permission--format-tool-detail tool-name tool-input)
+                      'face 'magnus-command-prompt-context))))))
 
       ('auto-approved
-       (magnus-command--insert-ts-agent ts name)
-       (insert " ")
-       (insert (propertize "auto-approved" 'face 'magnus-command-auto-approved))
-       (insert "\n")
-       (insert (propertize (concat "  " (or text ""))
-                           'face 'magnus-command-auto-approved)))
+       (if grouped
+           ;; Continuation: just the tool on its own line
+           (insert (propertize (concat "  " (or text ""))
+                               'face 'magnus-command-auto-approved))
+         ;; Full header — compact single line
+         (magnus-command--insert-ts-agent ts name)
+         (insert " ")
+         (insert (propertize (concat "auto: " (or text ""))
+                             'face 'magnus-command-auto-approved))))
 
       ((or 'user-response 'message-sent)
        (insert (propertize ts 'face 'magnus-command-timestamp))
@@ -597,17 +667,26 @@ Optional INSTANCE-ID is attached as a text property for navigation."
        (insert (or text "")))
 
       ('agent-reply
-       (magnus-command--insert-ts-agent ts name (plist-get event :instance-id))
-       (insert ": ")
-       (insert (propertize (or text "")
-                           'face 'magnus-command-agent-reply)))
+       (let ((display-text (magnus-command--truncate-lines
+                            (or text "") magnus-command-reply-max-lines)))
+         (if grouped
+             ;; Continuation: indented text, no header
+             (insert (propertize (concat "  " display-text)
+                                 'face 'magnus-command-agent-reply))
+           ;; Full header
+           (magnus-command--insert-ts-agent ts name (plist-get event :instance-id))
+           (insert ": ")
+           (insert (propertize display-text
+                               'face 'magnus-command-agent-reply)))))
 
       ('status-change
-       (insert (propertize ts 'face 'magnus-command-timestamp))
-       (insert "  ")
-       (insert (propertize (format "%s %s" name (or text ""))
-                           'face 'magnus-command-system
-                           'magnus-command-instance-id (plist-get event :instance-id)))))))
+       ;; Centered divider style
+       (let* ((msg (format " %s %s " name (or text "")))
+              (pad-len (max 2 (/ (- 56 (length msg)) 2)))
+              (pad (make-string pad-len ?─)))
+         (insert (propertize (concat pad msg pad)
+                             'face 'magnus-command-system
+                             'magnus-command-instance-id (plist-get event :instance-id))))))))
 
 (defun magnus-command--apply-bg-overlay (event start end)
   "Apply a background overlay for EVENT from START to END."
@@ -634,18 +713,17 @@ Optional INSTANCE-ID is attached as a text property for navigation."
   (when-let ((buf (get-buffer magnus-command-buffer-name)))
     (with-current-buffer buf
       (let ((inhibit-read-only t)
-            (user-text (magnus-command--get-input-text)))
+            (user-text (magnus-command--get-input-text))
+            (prev-event nil))
         (remove-overlays (point-min) (point-max) 'magnus-command-bg t)
         (erase-buffer)
-        ;; Header
-        (insert (propertize "Magnus Command Buffer" 'face 'magnus-command-agent-name))
-        (insert "\n\n")
         ;; Events (oldest first — our list is newest-first)
         (dolist (event (reverse magnus-command--events))
           (let ((start (point)))
-            (magnus-command--render-event event)
+            (magnus-command--render-event event prev-event)
             (insert "\n")
-            (magnus-command--apply-bg-overlay event start (point))))
+            (magnus-command--apply-bg-overlay event start (point)))
+          (setq prev-event event))
         ;; Separator
         (magnus-command--insert-separator)
         ;; Input area
