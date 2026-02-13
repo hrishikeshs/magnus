@@ -46,9 +46,9 @@
   :type '(repeat string)
   :group 'magnus)
 
-(defcustom magnus-permission-auto-approve-project-write t
-  "Auto-approve Edit/Write/Bash when operating within the project directory.
-When non-nil, file edits and writes to paths under the instance's
+(defcustom magnus-permission-auto-approve-project-scope t
+  "Auto-approve file tools when operating within the project directory.
+When non-nil, Read/Edit/Write/Glob/Grep on paths under the instance's
 working directory are auto-approved.  Access outside the project
 triggers an interactive prompt."
   :type 'boolean
@@ -161,17 +161,31 @@ When INSTANCE is provided, also checks project-scoped rules."
             (cl-some (lambda (pattern)
                        (string-match-p pattern command))
                      magnus-permission-auto-approve-bash-patterns))))
-   ;; Project-scoped: Edit/Write within the instance's directory
-   (and magnus-permission-auto-approve-project-write
+   ;; Project-scoped: file tools within the instance's directory
+   (and magnus-permission-auto-approve-project-scope
         instance
-        (member tool-name '("Edit" "Write"))
-        (let ((file (or (alist-get 'file_path tool-input)
-                        (alist-get 'filePath tool-input))))
-          (when file
-            (file-in-directory-p (expand-file-name file)
-                                 (magnus-instance-directory instance)))))))
+        (magnus-permission--in-project-p tool-name tool-input instance))))
 
 ;;; Response writing
+
+(defun magnus-permission--in-project-p (tool-name tool-input instance)
+  "Return non-nil if TOOL-NAME with TOOL-INPUT operates within INSTANCE's project."
+  (let* ((project-dir (magnus-instance-directory instance))
+         (file (or (alist-get 'file_path tool-input)
+                   (alist-get 'filePath tool-input)
+                   (alist-get 'path tool-input))))
+    (pcase tool-name
+      ((or "Read" "Edit" "Write")
+       ;; These require a file path — check it's within project
+       (and file
+            (file-in-directory-p (expand-file-name file project-dir)
+                                 project-dir)))
+      ((or "Glob" "Grep")
+       ;; Path is optional; defaults to cwd (= project dir) when absent
+       (or (null file)
+           (file-in-directory-p (expand-file-name file project-dir)
+                                project-dir)))
+      (_ nil))))
 
 (defun magnus-permission--write-response (response-file behavior &optional message)
   "Write a CC hook decision to RESPONSE-FILE.
@@ -472,14 +486,15 @@ Called when the command buffer is killed."
    "emacsclient -n --eval "
    "\"(magnus-permission-notify \\\"$F\\\" \\\"$R\\\")\" "
    ">/dev/null 2>&1 || exit 1; "
-   "for i in $(seq 1 1200); do "
+   "for i in $(seq 1 6000); do "
    "[ -f \"$R\" ] && { "
    "head -1 \"$R\" | grep -q \"^SKIP$\" && exit 1; "
-   "cat \"$R\"; exit 0; }; sleep 0.5; "
+   "cat \"$R\"; exit 0; }; sleep 0.1; "
    "done; exit 1'")
   "Inline bash command for the CC PermissionRequest hook.
 Reads JSON from stdin, notifies Emacs via emacsclient, polls for
-response.  Falls back to normal CC dialog if Emacs is unavailable.")
+response at 100ms intervals.  Falls back to normal CC dialog if
+Emacs is unavailable.")
 
 ;;; Setup
 
