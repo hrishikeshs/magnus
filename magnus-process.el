@@ -848,12 +848,14 @@ PARTIAL is the incomplete line from previous call.  Returns new partial."
     (_ "")))
 
 (defun magnus-process--stream-render-question (instance tool-input)
-  "Render an AskUserQuestion TOOL-INPUT in the output buffer.
-Also notifies the command buffer so the user sees the question.
+  "Render an AskUserQuestion TOOL-INPUT and prompt the user.
+Renders in the output buffer, notifies the command buffer,
+and schedules a minibuffer prompt to collect the answer.
 INSTANCE is the stream agent asking."
   (let ((questions (alist-get 'questions tool-input))
         (full-text ""))
     (when (and questions (vectorp questions))
+      ;; Render in output buffer
       (insert (propertize "\n  === Question ===\n" 'face 'font-lock-warning-face))
       (seq-doseq (q questions)
         (let ((question (alist-get 'question q))
@@ -861,7 +863,10 @@ INSTANCE is the stream agent asking."
           (when question
             (insert (propertize (format "  %s\n" question)
                                 'face '(:weight bold)))
-            (setq full-text (concat full-text question)))
+            (setq full-text
+                  (concat full-text
+                          (if (string-empty-p full-text) "" "; ")
+                          question)))
           (when (and options (vectorp options))
             (let ((idx 1))
               (seq-doseq (opt options)
@@ -875,12 +880,69 @@ INSTANCE is the stream agent asking."
                   (insert "\n")
                   (setq idx (1+ idx))))))
           (insert "\n")))
-      (insert (propertize "  (reply via command buffer to answer)\n\n"
-                          'face 'font-lock-comment-face))
       ;; Notify command buffer
       (magnus-process--stream-notify
-       instance 'stream-question
-       :text full-text))))
+       instance 'stream-question :text full-text)
+      ;; Schedule interactive prompt (can't block in process filter)
+      (run-at-time 0.5 nil
+                   #'magnus-process--stream-ask-user
+                   instance questions))))
+
+(defun magnus-process--stream-ask-user (instance questions)
+  "Prompt user for answers to QUESTIONS from stream INSTANCE.
+Pops up `completing-read' with options (works with vertico/ivy/helm).
+Sends the answer back as a follow-up message via the stream."
+  (condition-case nil
+      (let ((answers nil)
+            (name (magnus-instance-name instance)))
+        (seq-doseq (q questions)
+          (let* ((question (alist-get 'question q))
+                 (options (alist-get 'options q))
+                 (multi (eq (alist-get 'multiSelect q) t))
+                 (choices (when (and options (vectorp options))
+                            (mapcar (lambda (opt) (alist-get 'label opt))
+                                    options)))
+                 (answer
+                  (cond
+                   ;; Multi-select: completing-read-multiple
+                   ((and choices multi)
+                    (string-join
+                     (completing-read-multiple
+                      (format "[%s] %s: " name question)
+                      choices)
+                     ", "))
+                   ;; Single-select: completing-read (allows custom input)
+                   (choices
+                    (completing-read
+                     (format "[%s] %s: " name question)
+                     choices nil nil))
+                   ;; No options: free text
+                   (t
+                    (read-string
+                     (format "[%s] %s: " name question))))))
+            (push (cons question answer) answers)))
+        ;; Format and send
+        (let* ((pairs (nreverse answers))
+               (reply (mapconcat
+                       (lambda (qa)
+                         (format "Re: \"%s\" — %s" (car qa) (cdr qa)))
+                       pairs "\n")))
+          (unless (string-empty-p (string-trim reply))
+            (magnus-process-send-stream instance reply)
+            ;; Log in output buffer
+            (when-let ((buf (magnus-instance-buffer instance)))
+              (when (buffer-live-p buf)
+                (with-current-buffer buf
+                  (let ((inhibit-read-only t))
+                    (goto-char (point-max))
+                    (insert (propertize
+                             (format "  → answered: %s\n\n"
+                                     (string-trim reply))
+                             'face 'font-lock-string-face)))))))))
+    ;; User cancelled with C-g
+    (quit
+     (message "Magnus: question from %s dismissed"
+              (magnus-instance-name instance)))))
 
 (defun magnus-process--stream-sentinel-fn (instance)
   "Return a process sentinel for stream INSTANCE."
