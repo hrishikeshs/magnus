@@ -305,7 +305,13 @@ If FORCE is non-nil, forcefully terminate."
     (let ((id (magnus-instance-id instance)))
       (remhash id magnus-process--stream-procs)
       (remhash id magnus-process--stream-ready)
-      (remhash id magnus-process--stream-pending)))
+      (remhash id magnus-process--stream-pending))
+    ;; Kill stderr buffer
+    (let ((stderr-buf (get-buffer
+                       (format " *claude-stream-stderr:%s*"
+                               (magnus-instance-name instance)))))
+      (when (and stderr-buf (buffer-live-p stderr-buf))
+        (kill-buffer stderr-buf))))
   (magnus-instances-update instance :status 'stopped :buffer nil))
 
 (defun magnus-process-kill-and-remove (instance &optional force)
@@ -700,19 +706,25 @@ Uses --input-format stream-json for bidirectional JSON communication."
     (remhash id magnus-process--stream-ready)
     (remhash id magnus-process--stream-pending)
     ;; Create persistent process
+    ;; Use 'pipe — the CLI checks !process.stdout.isTTY to suppress the TUI
+    ;; and enter SDK/stream-json mode.  Pipes are what the SDK uses.
     (let* ((partial-line "")
+           (stderr-buf (get-buffer-create
+                        (format " *claude-stream-stderr:%s*" name)))
            (proc (make-process
                   :name (format "claude-stream-%s" name)
                   :buffer buffer
                   :command (cons magnus-claude-executable args)
-                  :connection-type 'pty
+                  :connection-type 'pipe
+                  :stderr stderr-buf
                   :sentinel (magnus-process--stream-sentinel instance)
                   :filter (lambda (proc output)
                             (setq partial-line
                                   (magnus-process--stream-filter
                                    instance proc output partial-line))))))
       (puthash id proc magnus-process--stream-procs)
-      (message "Magnus: started persistent stream process for %s" name))))
+      (message "Magnus: started persistent stream process for %s (pipe mode)"
+               name))))
 
 (defun magnus-process-send-stream (instance message)
   "Send MESSAGE to the persistent stream INSTANCE via stdin JSON.
@@ -1023,6 +1035,28 @@ is the control_request ID to respond to."
               (insert (propertize
                        (format "\n--- Process %s ---\n" event-str)
                        'face 'magnus-trace-separator))))))
+      ;; Log stderr contents if any
+      (let ((stderr-buf (get-buffer
+                         (format " *claude-stream-stderr:%s*"
+                                 (magnus-instance-name instance)))))
+        (when (and stderr-buf (buffer-live-p stderr-buf))
+          (let ((stderr-text (with-current-buffer stderr-buf
+                               (buffer-string))))
+            (unless (string-empty-p (string-trim stderr-text))
+              (message "Magnus: stderr for %s:\n%s"
+                       (magnus-instance-name instance)
+                       (string-trim stderr-text))
+              ;; Also show in output buffer
+              (when-let ((buf (process-buffer proc)))
+                (when (buffer-live-p buf)
+                  (with-current-buffer buf
+                    (let ((inhibit-read-only t))
+                      (goto-char (point-max))
+                      (insert (propertize
+                               (format "\nstderr: %s\n"
+                                       (string-trim stderr-text))
+                               'face 'font-lock-warning-face))))))))
+          (kill-buffer stderr-buf)))
       ;; Notify command buffer
       (magnus-process--stream-notify
        instance 'stream-done
