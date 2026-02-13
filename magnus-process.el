@@ -28,6 +28,7 @@
 (defvar magnus-default-directory)
 (defvar magnus-instance-name-generator)
 (defvar magnus-buffer-name)
+(defvar magnus-stream-allowed-tools)
 
 ;; Forward declarations for stream mode (defined later in this file)
 (defvar magnus-process--stream-busy)
@@ -719,11 +720,12 @@ If idle, spawn a new process with --resume."
 (defun magnus-process--stream-args (session-id message)
   "Build CLI args for a stream process.
 SESSION-ID is used for --resume if non-nil.  MESSAGE is the prompt.
-No --allowedTools: all tools go through the PermissionRequest hook
-for project-scoped auto-approve and interactive prompts."
+Uses --allowedTools to pre-approve tools (required: -p mode silently
+denies non-listed tools without firing hooks)."
   (let ((args (list "--print" message
                     "--output-format" "stream-json"
-                    "--verbose")))
+                    "--verbose"
+                    "--allowedTools" magnus-stream-allowed-tools)))
     (when session-id
       (setq args (append (list "--resume" session-id) args)))
     args))

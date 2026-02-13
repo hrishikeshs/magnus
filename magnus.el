@@ -93,6 +93,14 @@ only tools listed here will be available."
   :type 'string
   :group 'magnus)
 
+(defcustom magnus-stream-allowed-tools "Read Write Edit Glob Grep Bash"
+  "Space-separated list of tools pre-approved in stream mode.
+In -p mode, tools not listed here are silently denied (no hooks fire).
+For proper permission handling, the interactive stream-json mode
+is needed (planned)."
+  :type 'string
+  :group 'magnus)
+
 
 (defcustom magnus-buffer-name "*magnus*"
   "Name of the magnus status buffer."
