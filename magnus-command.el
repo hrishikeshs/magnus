@@ -29,6 +29,7 @@
 (declare-function magnus-process-read-jsonl-lines "magnus-process")
 (declare-function magnus-permission-cleanup "magnus-permission")
 (declare-function magnus-permission--format-tool-detail "magnus-permission")
+(declare-function magnus-coord-add-log "magnus-coord")
 (declare-function projectile-mode "projectile")
 
 ;;; Customization
@@ -462,9 +463,17 @@ Otherwise, send as a free-form message via @mention or target."
                 (setq target-name (magnus-instance-name inst)))
             (user-error "Target instance no longer exists"))
         (user-error "No target — use @agent-name or C-c C-t to pick one")))
-    ;; Send the message
+    ;; Send via coord file — reliable, persisted, triggers @mention watcher
     (when-let ((instance (magnus-instances-get target-id)))
-      (magnus-coord-send-message instance text))
+      (let ((directory (magnus-instance-directory instance))
+            ;; Ensure @mention is in the log entry for the watcher
+            (log-text (if (string-match-p (format "@%s\\b" (regexp-quote target-name)) text)
+                         text
+                       (format "@%s %s" target-name text))))
+        (magnus-coord-add-log directory "user" log-text)
+        ;; Retry nudge: if the file-watcher notification got lost,
+        ;; poke the agent again after a few seconds
+        (magnus-command--schedule-nudge target-id 5)))
     ;; Log it
     (magnus-command--add-event
      (list :type 'message-sent
@@ -473,6 +482,16 @@ Otherwise, send as a free-form message via @mention or target."
            :instance-name target-name
            :text text
            :handled t))))
+
+(defun magnus-command--schedule-nudge (instance-id delay)
+  "Send a short nudge to INSTANCE-ID after DELAY seconds.
+Falls back to vterm as a retry in case the file-watcher notification
+was lost during busy output."
+  (run-with-timer delay nil
+    (lambda ()
+      (when-let ((inst (magnus-instances-get instance-id)))
+        (magnus-coord-send-message
+         inst "Check .magnus-coord.md — new message for you.")))))
 
 (defun magnus-command-broadcast ()
   "Send the input text to ALL running agents."
@@ -483,7 +502,10 @@ Otherwise, send as a free-form message via @mention or target."
     (let ((sent 0))
       (dolist (instance (magnus-instances-list))
         (when (magnus-process-running-p instance)
-          (magnus-coord-send-message instance text)
+          (let* ((name (magnus-instance-name instance))
+                 (directory (magnus-instance-directory instance))
+                 (log-text (format "@%s %s" name text)))
+            (magnus-coord-add-log directory "user" log-text))
           (cl-incf sent)))
       ;; Log it
       (magnus-command--add-event
