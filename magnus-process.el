@@ -735,14 +735,26 @@ PARTIAL is the incomplete line from previous call.  Returns new partial."
          (remainder (car (last lines)))
          (complete-lines (butlast lines)))
     (dolist (line complete-lines)
-      (when (and (not (string-empty-p line))
-                 (string-prefix-p "{" (string-trim line)))
-        (condition-case nil
-            (let* ((json (json-parse-string (string-trim line)
-                                            :object-type 'alist))
-                   (type (alist-get 'type json)))
-              (magnus-process--stream-handle-event instance proc json type))
-          (error nil))))
+      (let ((trimmed (string-trim line)))
+        (unless (string-empty-p trimmed)
+          (if (string-prefix-p "{" trimmed)
+              ;; JSON line — parse and handle
+              (condition-case err
+                  (let* ((json (json-parse-string trimmed
+                                                  :object-type 'alist))
+                         (type (alist-get 'type json)))
+                    (magnus-process--stream-handle-event
+                     instance proc json type))
+                (error
+                 (message "Magnus: JSON parse error: %s" err)))
+            ;; Non-JSON line — show it (stderr, errors, etc.)
+            (when-let ((buf (process-buffer proc)))
+              (when (buffer-live-p buf)
+                (with-current-buffer buf
+                  (let ((inhibit-read-only t))
+                    (goto-char (point-max))
+                    (insert (propertize (concat trimmed "\n")
+                                        'face 'font-lock-warning-face))))))))))
     remainder))
 
 (defun magnus-process--stream-handle-event (instance proc json type)
@@ -839,8 +851,10 @@ PARTIAL is the incomplete line from previous call.  Returns new partial."
   (lambda (proc event)
     (let* ((id (magnus-instance-id instance))
            (event-str (string-trim event)))
-      ;; Mark not busy
+      ;; ALWAYS clear busy first — even if rest of sentinel errors
       (remhash id magnus-process--stream-busy)
+      (message "Magnus: stream sentinel for '%s': %s"
+               (magnus-instance-name instance) event-str)
       ;; Update status
       (cond
        ((string= event-str "finished")
