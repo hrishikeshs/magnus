@@ -808,15 +808,13 @@ PARTIAL is the incomplete line from previous call.  Returns new partial."
                                    'font-lock-warning-face
                                  'font-lock-comment-face)))))))))
             ("result"
-             (let ((cost (alist-get 'total_cost_usd json))
-                   (turns (alist-get 'num_turns json))
+             (let ((turns (alist-get 'num_turns json))
                    (denials (alist-get 'permission_denials json)))
                (insert
                 (propertize
-                 (format "\n--- Done (%d turn%s, $%.4f) ---\n"
+                 (format "\n--- Done (%d turn%s) ---\n"
                          (or turns 0)
-                         (if (= (or turns 0) 1) "" "s")
-                         (or cost 0))
+                         (if (= (or turns 0) 1) "" "s"))
                  'face 'magnus-trace-separator))
                ;; Report permission denials
                (when (and denials (> (length denials) 0))
@@ -828,10 +826,9 @@ PARTIAL is the incomplete line from previous call.  Returns new partial."
                ;; Notify command buffer
                (magnus-process--stream-notify
                 instance 'stream-done
-                :text (format "done (%d turn%s, $%.4f)"
+                :text (format "done (%d turn%s)"
                               (or turns 0)
-                              (if (= (or turns 0) 1) "" "s")
-                              (or cost 0)))))))))))
+                              (if (= (or turns 0) 1) "" "s")))))))))))
 
 (defun magnus-process--stream-tool-summary (tool-name tool-input)
   "Format a brief summary of TOOL-NAME with TOOL-INPUT for display."

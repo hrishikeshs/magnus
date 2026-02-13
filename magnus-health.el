@@ -18,6 +18,7 @@
 (require 'magnus-instances)
 
 (declare-function magnus-process-running-p "magnus-process")
+(declare-function magnus-process--stream-p "magnus-process")
 
 ;;; Customization
 
@@ -76,9 +77,9 @@ Values are plists: (:hash STRING :last-change-time FLOAT
 ;;; Core logic
 
 (defun magnus-health-check-all ()
-  "Check health of all running instances."
+  "Check health of all active instances (running or idle)."
   (dolist (instance (magnus-instances-list))
-    (when (eq (magnus-instance-status instance) 'running)
+    (when (memq (magnus-instance-status instance) '(running idle))
       (magnus-health--check-instance instance)))
   ;; Clean up state for removed instances
   (let ((live-ids (mapcar #'magnus-instance-id (magnus-instances-list))))
@@ -105,11 +106,19 @@ Values are plists: (:hash STRING :last-change-time FLOAT
                magnus-health--state)
       (when (eq (magnus-instance-status instance) 'running)
         (magnus-instances-update instance :status 'stopped)))
-     ;; Process not live
+     ;; Process not live — but idle stream agents are OK
      ((not (magnus-process-running-p instance))
-      (puthash id (list :hash nil :last-change-time now
-                        :stuck-count 0 :health 'dead)
-               magnus-health--state))
+      (if (and (magnus-process--stream-p instance)
+               (eq (magnus-instance-status instance) 'idle))
+          ;; Stream agent between turns — healthy
+          (puthash id (list :hash (or prev-hash "")
+                            :last-change-time now
+                            :stuck-count 0 :health 'ok)
+                   magnus-health--state)
+        ;; Actually dead
+        (puthash id (list :hash nil :last-change-time now
+                          :stuck-count 0 :health 'dead)
+                 magnus-health--state)))
      ;; Process is live — check buffer content
      (t
       (let ((new-hash (magnus-health--compute-hash buffer)))

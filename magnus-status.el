@@ -75,6 +75,11 @@
   "Face for errored status (headless failed)."
   :group 'magnus)
 
+(defface magnus-status-idle
+  '((t :inherit success :slant italic))
+  "Face for idle status (stream agent between turns)."
+  :group 'magnus)
+
 ;;; Mode definition
 
 (defvar magnus-status-mode-map
@@ -189,16 +194,19 @@ Also reconciles coordination files, removing stale entries."
          (suspended (eq status 'suspended))
          (finished (eq status 'finished))
          (errored (eq status 'errored))
+         (idle (eq status 'idle))
          (running (or (eq status 'running)
                       (magnus-process-running-p instance)))
          (status-str (cond (suspended "suspended")
                            (finished "finished")
                            (errored "errored")
+                           (idle "idle")
                            (running "running")
                            (t "stopped")))
          (status-face (cond (suspended 'magnus-status-suspended)
                             (finished 'magnus-status-finished)
                             (errored 'magnus-status-errored)
+                            (idle 'magnus-status-idle)
                             (running 'magnus-status-running)
                             (t 'magnus-status-stopped)))
          (health-ind (magnus-health-indicator instance))
