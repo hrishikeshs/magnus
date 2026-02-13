@@ -705,7 +705,7 @@ Uses --input-format stream-json for bidirectional JSON communication."
                   :name (format "claude-stream-%s" name)
                   :buffer buffer
                   :command (cons magnus-claude-executable args)
-                  :connection-type 'pipe
+                  :connection-type 'pty
                   :sentinel (magnus-process--stream-sentinel instance)
                   :filter (lambda (proc output)
                             (setq partial-line
