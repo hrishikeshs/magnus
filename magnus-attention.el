@@ -42,15 +42,11 @@
     ;; New CC numbered prompt format (Ink-based)
     "Esc to cancel"
     "Do you want to proceed"
-    "❯"
     ;; General patterns
     "Press Enter to continue"
     "Allow\\?"
     "Proceed\\?"
-    "Continue\\?"
-    "approve"
-    "permission"
-    "Do you want to")
+    "Continue\\?")
   "Patterns that indicate an instance is waiting for input.
 These are matched against the last few lines of the vterm buffer."
   :type '(repeat regexp)
