@@ -79,6 +79,15 @@
 (defvar-local magnus-chat--input-marker nil
   "Marker at the start of the input area.")
 
+(defvar-local magnus-chat--history nil
+  "List of previously sent messages (most recent first).")
+
+(defvar-local magnus-chat--history-index -1
+  "Current position in the history ring.  -1 means not browsing.")
+
+(defvar-local magnus-chat--history-saved nil
+  "Saved input text before entering history browsing.")
+
 ;;; Major mode
 
 (defvar magnus-chat-mode-map
@@ -88,6 +97,10 @@
     (define-key map (kbd "TAB") #'magnus-chat-cycle-agent)
     (define-key map (kbd "C-c C-k") #'magnus-chat-clear)
     (define-key map (kbd "C-c C-q") #'quit-window)
+    (define-key map (kbd "<up>") #'magnus-chat-history-prev)
+    (define-key map (kbd "<down>") #'magnus-chat-history-next)
+    (define-key map (kbd "M-p") #'magnus-chat-history-prev)
+    (define-key map (kbd "M-n") #'magnus-chat-history-next)
     map)
   "Keymap for `magnus-chat-mode'.")
 
@@ -235,6 +248,45 @@ Send messages to Claude Code agents from one place.
                  (magnus-instance-name magnus-chat--target)))))
     (magnus-chat--redraw-prompt)))
 
+;;; Input history
+
+(defun magnus-chat-history-prev ()
+  "Replace input with the previous history entry."
+  (interactive)
+  (unless magnus-chat--history
+    (user-error "No history"))
+  (when (= magnus-chat--history-index -1)
+    ;; Save current input before browsing
+    (setq magnus-chat--history-saved
+          (buffer-substring-no-properties
+           magnus-chat--input-marker (point-max))))
+  (let ((new-idx (min (1+ magnus-chat--history-index)
+                      (1- (length magnus-chat--history)))))
+    (setq magnus-chat--history-index new-idx)
+    (magnus-chat--replace-input (nth new-idx magnus-chat--history))))
+
+(defun magnus-chat-history-next ()
+  "Replace input with the next (more recent) history entry."
+  (interactive)
+  (cond
+   ((< magnus-chat--history-index 0)
+    (user-error "End of history"))
+   ((= magnus-chat--history-index 0)
+    ;; Back to the saved input
+    (setq magnus-chat--history-index -1)
+    (magnus-chat--replace-input (or magnus-chat--history-saved "")))
+   (t
+    (setq magnus-chat--history-index (1- magnus-chat--history-index))
+    (magnus-chat--replace-input
+     (nth magnus-chat--history-index magnus-chat--history)))))
+
+(defun magnus-chat--replace-input (text)
+  "Replace the current input area with TEXT."
+  (let ((inhibit-read-only t))
+    (delete-region magnus-chat--input-marker (point-max))
+    (goto-char magnus-chat--input-marker)
+    (insert text)))
+
 ;;; Target validation
 
 (defun magnus-chat--refresh-target ()
@@ -268,6 +320,9 @@ dead or missing, fall back to the first running agent."
                  magnus-chat--input-marker (point-max)))))
     (when (string-empty-p input)
       (user-error "Nothing to send"))
+    ;; Save to history
+    (push input magnus-chat--history)
+    (setq magnus-chat--history-index -1)
     ;; Clear input area
     (let ((inhibit-read-only t))
       (delete-region magnus-chat--input-marker (point-max)))
