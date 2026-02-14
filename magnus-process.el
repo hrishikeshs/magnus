@@ -92,13 +92,20 @@ Avoids triggering interactive prompts from Projectile."
       buffer)))
 
 (defun magnus-process--send-onboarding (instance)
-  "Send onboarding message to INSTANCE."
+  "Send onboarding message to INSTANCE.
+Delays the Return keystroke so the terminal has time to process
+the full message text before submitting."
   (when-let ((buffer (magnus-instance-buffer instance)))
     (when (buffer-live-p buffer)
       (let ((msg (magnus-process--onboarding-message instance)))
         (with-current-buffer buffer
-          (vterm-send-string msg)
-          (vterm-send-return))))))
+          (vterm-send-string msg))
+        ;; Delay Return so the TUI can digest the pasted text
+        (run-with-timer 0.5 nil
+                        (lambda ()
+                          (when (buffer-live-p buffer)
+                            (with-current-buffer buffer
+                              (vterm-send-return)))))))))
 
 (defun magnus-process--onboarding-message (instance)
   "Generate onboarding message for INSTANCE."
