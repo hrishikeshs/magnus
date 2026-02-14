@@ -128,14 +128,17 @@ after handling all permission prompts.")
 ;;; Queue management
 
 (defun magnus-attention-request (instance)
-  "Add INSTANCE to the attention queue if not already present."
+  "Add INSTANCE to the attention queue if not already present.
+When the instance is the first in queue, focus its buffer immediately."
   (let ((id (magnus-instance-id instance)))
     (unless (member id magnus-attention-queue)
       (setq magnus-attention-queue (append magnus-attention-queue (list id)))
-      (when (and magnus-attention-notify
-                 (= (length magnus-attention-queue) 1))
-        ;; First in queue, notify immediately
-        (magnus-attention--notify instance)))))
+      (when (= (length magnus-attention-queue) 1)
+        ;; First in queue — take the floor and focus
+        (setq magnus-attention-current id)
+        (when magnus-attention-notify
+          (magnus-attention--notify instance))
+        (magnus-attention--focus instance)))))
 
 (defun magnus-attention-release (instance)
   "Release INSTANCE from the attention queue."
@@ -181,19 +184,34 @@ When the queue is empty and a return buffer is set, switch back to it."
 
 (defun magnus-attention-check-all ()
   "Check all instances for attention needs.
-Tries auto-approval first; falls back to the attention queue."
+Tries auto-approval first; falls back to the attention queue.
+Also releases queued instances whose prompts have been handled."
   ;; Prevent re-entry and protect against errors
   (unless magnus-attention--checking
     (setq magnus-attention--checking t)
     (unwind-protect
         (condition-case nil
-            (dolist (instance (magnus-instances-list))
-              (when (and (magnus-attention--needs-input-p instance)
-                         (not (magnus-process--headless-p instance)))
-                (unless (magnus-attention--try-auto-approve instance)
-                  (magnus-attention-request instance))))
-          (error nil))  ; Silently ignore errors
+            (progn
+              ;; Add new attention requests
+              (dolist (instance (magnus-instances-list))
+                (when (and (magnus-attention--needs-input-p instance)
+                           (not (magnus-process--headless-p instance)))
+                  (unless (magnus-attention--try-auto-approve instance)
+                    (magnus-attention-request instance))))
+              ;; Release queued instances that no longer need input
+              (magnus-attention--release-handled))
+          (error nil))
       (setq magnus-attention--checking nil))))
+
+(defun magnus-attention--release-handled ()
+  "Release queued instances whose prompts have been handled."
+  (let ((to-release nil))
+    (dolist (id magnus-attention-queue)
+      (when-let ((instance (magnus-instances-get id)))
+        (unless (magnus-attention--needs-input-p instance)
+          (push instance to-release))))
+    (dolist (instance to-release)
+      (magnus-attention-release instance))))
 
 (defun magnus-attention--needs-input-p (instance)
   "Check if INSTANCE appears to need user input."
