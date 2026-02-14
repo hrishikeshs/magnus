@@ -696,7 +696,8 @@ Uses --input-format stream-json for bidirectional JSON communication."
          (session-id (magnus-instance-session-id instance))
          (buffer (magnus-instance-buffer instance))
          (default-directory directory)
-         (args (list "--input-format" "stream-json"
+         (args (list "-p"
+                     "--input-format" "stream-json"
                      "--output-format" "stream-json"
                      "--verbose")))
     ;; Add --resume if reconnecting to an existing session
@@ -709,14 +710,11 @@ Uses --input-format stream-json for bidirectional JSON communication."
     ;; Use 'pipe — the CLI checks !process.stdout.isTTY to suppress the TUI
     ;; and enter SDK/stream-json mode.  Pipes are what the SDK uses.
     (let* ((partial-line "")
-           (stderr-buf (get-buffer-create
-                        (format " *claude-stream-stderr:%s*" name)))
            (proc (make-process
                   :name (format "claude-stream-%s" name)
                   :buffer buffer
                   :command (cons magnus-claude-executable args)
                   :connection-type 'pipe
-                  :stderr stderr-buf
                   :sentinel (magnus-process--stream-sentinel instance)
                   :filter (lambda (proc output)
                             (setq partial-line
@@ -728,11 +726,10 @@ Uses --input-format stream-json for bidirectional JSON communication."
                (process-id proc)
                (process-status proc)
                (process-command proc))
-      (message "[%s] DBG spawn: type=%s buffer=%s stderr=%s"
+      (message "[%s] DBG spawn: type=%s buffer=%s"
                (format-time-string "%T.%3N")
                (process-type proc)
-               (buffer-name buffer)
-               (buffer-name stderr-buf)))))
+               (buffer-name buffer)))))
 
 (defun magnus-process-send-stream (instance message)
   "Send MESSAGE to the persistent stream INSTANCE via stdin JSON.
