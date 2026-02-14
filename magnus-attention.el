@@ -116,6 +116,15 @@ First element is the instance currently having the floor.")
 (defvar magnus-attention--checking nil
   "Non-nil if currently checking instances (prevents re-entry).")
 
+(defvar magnus-attention-return-buffer nil
+  "Buffer to return to when the attention queue empties.
+Set by the chat command center so the user is switched back
+after handling all permission prompts.")
+
+(defun magnus-attention-set-return-buffer (buffer)
+  "Set BUFFER as the destination when the attention queue empties."
+  (setq magnus-attention-return-buffer buffer))
+
 ;;; Queue management
 
 (defun magnus-attention-request (instance)
@@ -145,12 +154,19 @@ First element is the instance currently having the floor.")
       (magnus-attention-release instance))))
 
 (defun magnus-attention--focus-next ()
-  "Focus the next instance in the attention queue."
-  (when-let ((next-id (car magnus-attention-queue)))
-    (when-let ((instance (magnus-instances-get next-id)))
-      (setq magnus-attention-current next-id)
-      (magnus-attention--notify instance)
-      (magnus-attention--focus instance))))
+  "Focus the next instance in the attention queue.
+When the queue is empty and a return buffer is set, switch back to it."
+  (if-let ((next-id (car magnus-attention-queue)))
+      (when-let ((instance (magnus-instances-get next-id)))
+        (setq magnus-attention-current next-id)
+        (magnus-attention--notify instance)
+        (magnus-attention--focus instance))
+    ;; Queue empty — return to the chat buffer if set
+    (when (and magnus-attention-return-buffer
+               (buffer-live-p magnus-attention-return-buffer))
+      (let ((buf magnus-attention-return-buffer))
+        (setq magnus-attention-return-buffer nil)
+        (switch-to-buffer buf)))))
 
 (defun magnus-attention--focus (instance)
   "Focus INSTANCE's buffer."

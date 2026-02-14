@@ -23,7 +23,7 @@
 
 (declare-function vterm-send-string "vterm")
 (declare-function vterm-send-return "vterm")
-(declare-function magnus-coord-send-message "magnus-coord")
+(declare-function magnus-attention-set-return-buffer "magnus-attention")
 
 ;;; Faces
 
@@ -211,6 +211,7 @@ Send messages to Claude Code agents from one place.
 (defun magnus-chat-cycle-agent ()
   "Cycle to the next agent."
   (interactive)
+  (magnus-chat--refresh-target)
   (let* ((agents (magnus-chat--running-agents))
          (count (length agents)))
     (cond
@@ -221,7 +222,10 @@ Send messages to Claude Code agents from one place.
       (message "Only one agent: %s"
                (magnus-instance-name (car agents))))
      (t
-      (let* ((current-idx (cl-position magnus-chat--target agents))
+      (let* ((current-idx (cl-position magnus-chat--target agents
+                                       :test (lambda (a b)
+                                               (string= (magnus-instance-id a)
+                                                        (magnus-instance-id b)))))
              (next-idx (if current-idx
                           (mod (1+ current-idx) count)
                         0)))
@@ -230,11 +234,30 @@ Send messages to Claude Code agents from one place.
                  (magnus-instance-name magnus-chat--target)))))
     (magnus-chat--redraw-prompt)))
 
+;;; Target validation
+
+(defun magnus-chat--refresh-target ()
+  "Ensure target points to a live, canonical instance.
+Re-resolve by ID from the instance registry.  If the target is
+dead or missing, fall back to the first running agent."
+  (when magnus-chat--target
+    (let* ((id (magnus-instance-id magnus-chat--target))
+           (canonical (magnus-instances-get id)))
+      (setq magnus-chat--target
+            (if (and canonical
+                     (magnus-instance-buffer canonical)
+                     (buffer-live-p (magnus-instance-buffer canonical)))
+                canonical
+              nil))))
+  (unless magnus-chat--target
+    (magnus-chat--select-first-agent)))
+
 ;;; Sending messages
 
 (defun magnus-chat-send ()
   "Send the current input to the selected agent."
   (interactive)
+  (magnus-chat--refresh-target)
   (unless magnus-chat--target
     (magnus-chat-select-agent))
   (unless magnus-chat--target
@@ -251,10 +274,6 @@ Send messages to Claude Code agents from one place.
     (magnus-chat--render-outgoing input magnus-chat--target)
     ;; Send to vterm
     (magnus-chat--send-to-vterm magnus-chat--target input)
-    ;; Also write to coord file so other agents can see it
-    (condition-case nil
-        (magnus-coord-send-message magnus-chat--target input)
-      (error nil))
     ;; Redraw prompt
     (magnus-chat--redraw-prompt)
     ;; Scroll to bottom
@@ -337,7 +356,9 @@ Send messages to Claude Code agents from one place.
     (with-current-buffer buf
       (magnus-chat--update-header-line))
     (pop-to-buffer buf)
-    (goto-char (point-max))))
+    (goto-char (point-max))
+    ;; Register as the return-to buffer for attention system
+    (magnus-attention-set-return-buffer buf)))
 
 (provide 'magnus-chat)
 ;;; magnus-chat.el ends here
