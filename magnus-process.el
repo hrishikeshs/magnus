@@ -681,8 +681,11 @@ Returns the new instance."
       (magnus-instances-update instance :buffer buffer :status 'running))
     ;; Spawn the persistent process
     (magnus-process--stream-spawn instance)
-    ;; Queue onboarding — will be sent after init handshake completes
-    (magnus-process-send-stream
+    ;; Mark ready immediately — in -p mode there's no init handshake.
+    ;; Claude reads from stdin directly; system/init comes in response.
+    (puthash (magnus-instance-id instance) t magnus-process--stream-ready)
+    ;; Send onboarding right away (no queuing)
+    (magnus-process--stream-write-user-message
      instance
      (magnus-process--onboarding-message instance))
     instance))
