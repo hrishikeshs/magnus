@@ -339,12 +339,18 @@ dead or missing, fall back to the first running agent."
     (goto-char (point-max))))
 
 (defun magnus-chat--send-to-vterm (instance message)
-  "Send MESSAGE to INSTANCE's vterm buffer."
+  "Send MESSAGE to INSTANCE's vterm buffer.
+Delays the Return keystroke so the TUI can process the pasted text."
   (let ((buffer (magnus-instance-buffer instance)))
     (if (and buffer (buffer-live-p buffer))
-        (with-current-buffer buffer
-          (vterm-send-string message)
-          (vterm-send-return))
+        (progn
+          (with-current-buffer buffer
+            (vterm-send-string message))
+          (run-with-timer 0.3 nil
+                          (lambda ()
+                            (when (buffer-live-p buffer)
+                              (with-current-buffer buffer
+                                (vterm-send-return))))))
       (user-error "Agent %s has no live buffer"
                   (magnus-instance-name instance)))))
 
