@@ -42,12 +42,10 @@
     ;; CC Ink-based prompt format
     "Esc to cancel"
     "Do you want to proceed"
-    "❯"
     ;; General patterns
     "Press Enter to continue"
     "Allow\\?"
-    "Proceed\\?"
-    "Do you want to")
+    "Proceed\\?")
   "Patterns that indicate an instance is waiting for input.
 These are matched against the last few lines of the vterm buffer."
   :type '(repeat regexp)

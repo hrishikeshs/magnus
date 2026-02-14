@@ -24,6 +24,7 @@
 (declare-function vterm-send-string "vterm")
 (declare-function vterm-send-return "vterm")
 (declare-function magnus-attention-set-return-buffer "magnus-attention")
+(declare-function magnus-coord-record-contact "magnus-coord")
 
 ;;; Faces
 
@@ -274,6 +275,8 @@ dead or missing, fall back to the first running agent."
     (magnus-chat--render-outgoing input magnus-chat--target)
     ;; Send to vterm
     (magnus-chat--send-to-vterm magnus-chat--target input)
+    ;; Suppress periodic nudges for this agent
+    (magnus-coord-record-contact (magnus-instance-id magnus-chat--target))
     ;; Redraw prompt
     (magnus-chat--redraw-prompt)
     ;; Scroll to bottom
