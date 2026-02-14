@@ -58,6 +58,7 @@
 (declare-function magnus-process-create "magnus-process")
 (declare-function magnus-process-create-headless "magnus-process")
 (declare-function magnus-health-start "magnus-health")
+(declare-function magnus-chat "magnus-chat")
 
 ;;; Customization
 
@@ -149,6 +150,7 @@ DIRECTORY is ignored but accepted for API consistency."
     (require 'magnus-coord)
     (require 'magnus-attention)
     (require 'magnus-health)
+    (require 'magnus-chat)
     (magnus-persistence-load)
     (magnus-coord-ensure-watchers)
     (magnus-attention-start)

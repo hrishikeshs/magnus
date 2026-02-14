@@ -26,6 +26,7 @@
 (declare-function magnus-coord-open-instructions "magnus-coord")
 (declare-function magnus-health-toggle "magnus-health")
 (declare-function magnus-process-create-headless "magnus-process")
+(declare-function magnus-chat "magnus-chat")
 
 ;;; Main dispatch
 
@@ -56,6 +57,8 @@
    ("A" "Show attention queue" magnus-attention-show-queue)
    ("T" "Toggle attention monitoring" magnus-attention-toggle)
    ("H" "Toggle health monitoring" magnus-health-toggle)]
+  ["Chat"
+   ("M" "Open chat center" magnus-chat)]
   ["Navigation"
    ("RET" "Visit instance" magnus-status-visit)
    ("n" "Next instance" magnus-status-next)
