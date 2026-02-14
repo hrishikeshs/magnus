@@ -623,7 +623,8 @@ PARTIAL is the incomplete line from previous call.  Returns new partial."
 ;; --input-format stream-json --output-format stream-json --verbose.
 ;; User messages go as JSON on stdin, events stream on stdout.
 ;; Permission requests arrive as `control_request` events; we respond
-;; with `control_response` on stdin.  No `-p` flag, no `--allowedTools`.
+;; with `control_response` on stdin.  Uses `--allowedTools` from
+;; `magnus-headless-allowed-tools' to pre-approve common tools.
 
 (defvar magnus-process--stream-procs (make-hash-table :test 'equal)
   "Hash table: instance-id -> process object for persistent stream agents.")
@@ -702,7 +703,9 @@ Uses --input-format stream-json for bidirectional JSON communication."
          (args (list "-p"
                      "--input-format" "stream-json"
                      "--output-format" "stream-json"
-                     "--verbose")))
+                     "--verbose"
+                     "--allowedTools"
+                     magnus-headless-allowed-tools)))
     ;; Add --resume if reconnecting to an existing session
     (when session-id
       (setq args (append (list "--resume" session-id) args)))
