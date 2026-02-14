@@ -723,13 +723,25 @@ Uses --input-format stream-json for bidirectional JSON communication."
                                   (magnus-process--stream-filter
                                    instance proc output partial-line))))))
       (puthash id proc magnus-process--stream-procs)
-      (message "Magnus: started persistent stream process for %s (pipe mode)"
-               name))))
+      (message "[%s] DBG spawn: pid=%s status=%s cmd=%S"
+               (format-time-string "%T.%3N")
+               (process-id proc)
+               (process-status proc)
+               (process-command proc))
+      (message "[%s] DBG spawn: type=%s buffer=%s stderr=%s"
+               (format-time-string "%T.%3N")
+               (process-type proc)
+               (buffer-name buffer)
+               (buffer-name stderr-buf)))))
 
 (defun magnus-process-send-stream (instance message)
   "Send MESSAGE to the persistent stream INSTANCE via stdin JSON.
 If the init handshake isn't complete yet, queues the message."
   (let ((id (magnus-instance-id instance)))
+    (message "[%s] DBG send: ready=%s msg=%.80s"
+             (format-time-string "%T.%3N")
+             (gethash id magnus-process--stream-ready)
+             message)
     (if (gethash id magnus-process--stream-ready)
         ;; Ready — send immediately
         (magnus-process--stream-write-user-message instance message)
@@ -737,8 +749,9 @@ If the init handshake isn't complete yet, queues the message."
       (let ((queue (gethash id magnus-process--stream-pending)))
         (puthash id (append queue (list message))
                  magnus-process--stream-pending)
-        (message "Magnus: queued message for %s (waiting for init)"
-                 (magnus-instance-name instance))))))
+        (message "[%s] DBG send: queued (pending=%d)"
+                 (format-time-string "%T.%3N")
+                 (length (gethash id magnus-process--stream-pending)))))))
 
 (defun magnus-process--stream-write-user-message (instance message)
   "Write a SDKUserMessage JSON line to INSTANCE's stdin."
@@ -769,31 +782,55 @@ If the init handshake isn't complete yet, queues the message."
        :text (format "processing (%s)"
                      (if session-id "resume" "new session")))
       ;; Write JSON line to stdin
-      (process-send-string proc (concat (json-encode json-obj) "\n")))))
+      (let ((json-str (json-encode json-obj)))
+        (message "[%s] DBG stdin: writing %d bytes to %s"
+                 (format-time-string "%T.%3N")
+                 (length json-str)
+                 (magnus-instance-name instance))
+        (message "[%s] DBG stdin: %.200s"
+                 (format-time-string "%T.%3N") json-str)
+        (process-send-string proc (concat json-str "\n"))))))
 
 ;;; Stream filter — JSONL line processing
 
 (defun magnus-process--stream-filter (instance proc output partial)
   "Process stream-json OUTPUT from PROC for stream INSTANCE.
 PARTIAL is the incomplete line from previous call.  Returns new partial."
+  (message "[%s] DBG filter: got %d bytes from %s"
+           (format-time-string "%T.%3N")
+           (length output)
+           (magnus-instance-name instance))
+  (message "[%s] DBG filter raw: %.200s"
+           (format-time-string "%T.%3N") output)
   (let* ((combined (concat partial output))
          (lines (split-string combined "\n"))
          (remainder (car (last lines)))
          (complete-lines (butlast lines)))
+    (message "[%s] DBG filter: %d complete lines, remainder=%d bytes"
+             (format-time-string "%T.%3N")
+             (length complete-lines)
+             (length remainder))
     (dolist (line complete-lines)
       (let ((trimmed (string-trim line)))
         (unless (string-empty-p trimmed)
+          (message "[%s] DBG filter line: %.120s"
+                   (format-time-string "%T.%3N") trimmed)
           (if (string-prefix-p "{" trimmed)
               ;; JSON line — parse and handle
               (condition-case err
                   (let* ((json (json-parse-string trimmed
                                                   :object-type 'alist))
                          (type (alist-get 'type json)))
+                    (message "[%s] DBG filter: parsed type=%s"
+                             (format-time-string "%T.%3N") type)
                     (magnus-process--stream-handle-event
                      instance proc json type))
                 (error
-                 (message "Magnus: JSON parse error: %s" err)))
-            ;; Non-JSON line — show it (stderr, errors, etc.)
+                 (message "[%s] DBG filter: JSON parse error: %s"
+                          (format-time-string "%T.%3N") err)))
+            ;; Non-JSON line — show it
+            (message "[%s] DBG filter: non-JSON line: %s"
+                     (format-time-string "%T.%3N") trimmed)
             (when-let ((buf (process-buffer proc)))
               (when (buffer-live-p buf)
                 (with-current-buffer buf
@@ -904,9 +941,13 @@ JSON is the parsed control_request object."
   (let* ((request-id (alist-get 'request_id json))
          (request (alist-get 'request json))
          (subtype (alist-get 'subtype request)))
+    (message "[%s] DBG control_request: subtype=%s request_id=%s"
+             (format-time-string "%T.%3N") subtype request-id)
     (pcase subtype
       ;; Initialize — respond with empty success, then send queued messages
       ("initialize"
+       (message "[%s] DBG control_request: responding to initialize"
+                (format-time-string "%T.%3N"))
        (magnus-process--stream-respond proc request-id nil)
        (let ((id (magnus-instance-id instance)))
          (puthash id t magnus-process--stream-ready)
@@ -956,12 +997,14 @@ JSON is the parsed control_request object."
 RESPONSE-DATA is an alist for the response field (e.g. behavior),
 or nil for an empty success."
   (when (and proc (process-live-p proc))
-    (let ((json-obj `((type . "control_response")
-                      (response . ((subtype . "success")
-                                   (request_id . ,request-id)
-                                   (response . ,(or response-data
-                                                    (make-hash-table))))))))
-      (process-send-string proc (concat (json-encode json-obj) "\n")))))
+    (let* ((json-obj `((type . "control_response")
+                       (response . ((subtype . "success")
+                                    (request_id . ,request-id)
+                                    (response . ,(or response-data
+                                                     (make-hash-table)))))))
+           (json-str (json-encode json-obj)))
+      (message "[%s] DBG respond: %s" (format-time-string "%T.%3N") json-str)
+      (process-send-string proc (concat json-str "\n")))))
 
 (defun magnus-process--stream-prompt-permission
     (instance proc request-id tool-name tool-input)
@@ -1018,8 +1061,11 @@ is the control_request ID to respond to."
   (lambda (proc event)
     (let* ((id (magnus-instance-id instance))
            (event-str (string-trim event)))
-      (message "Magnus: stream process for '%s': %s"
-               (magnus-instance-name instance) event-str)
+      (message "[%s] DBG sentinel: %s -> %s (exit-status=%s)"
+               (format-time-string "%T.%3N")
+               (magnus-instance-name instance)
+               event-str
+               (process-exit-status proc))
       ;; Clean up state
       (remhash id magnus-process--stream-procs)
       (remhash id magnus-process--stream-ready)
