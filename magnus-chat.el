@@ -185,11 +185,10 @@ Send messages to Claude Code agents from one place.
 ;;; Agent selection
 
 (defun magnus-chat--running-agents ()
-  "Return list of instances that have live vterm buffers."
+  "Return list of instances that have live buffers."
   (cl-remove-if-not
    (lambda (inst)
-     (and (eq (magnus-instance-type inst) 'vterm)
-          (magnus-instance-buffer inst)
+     (and (magnus-instance-buffer inst)
           (buffer-live-p (magnus-instance-buffer inst))))
    (magnus-instances-list)))
 
