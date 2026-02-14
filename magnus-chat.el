@@ -413,7 +413,7 @@ dead or missing, fall back to the first running agent."
     ;; Refresh agent list and header
     (with-current-buffer buf
       (magnus-chat--update-header-line))
-    (pop-to-buffer buf)
+    (switch-to-buffer buf)
     (goto-char (point-max))
     ;; Register as the return-to buffer for attention system
     (magnus-attention-set-return-buffer buf)))
