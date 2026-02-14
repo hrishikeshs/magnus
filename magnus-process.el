@@ -645,12 +645,40 @@ Messages sent before this are queued in `--stream-pending'.")
   "Hash table: instance-id -> list of messages queued before init handshake.")
 
 (defvar magnus-process--stream-status-verbs
-  '("Pondering" "Scheming" "Lollygagging" "Musing" "Deliberating"
-    "Ruminating" "Cogitating" "Daydreaming" "Noodling" "Tinkering"
-    "Brainstorming" "Mulling" "Contemplating" "Plotting"
-    "Concocting" "Brewing" "Crafting" "Weaving" "Hatching"
-    "Riffing")
-  "Fun status verbs shown while a stream agent is working.")
+  '("Accomplishing" "Actualizing" "Architecting" "Baking" "Beaming"
+    "Beboppin'" "Befuddling" "Billowing" "Bloviating" "Boogieing"
+    "Boondoggling" "Booping" "Bootstrapping" "Brewing" "Burrowing"
+    "Calculating" "Canoodling" "Caramelizing" "Cascading" "Catapulting"
+    "Cerebrating" "Channeling" "Choreographing" "Churning" "Clauding"
+    "Coalescing" "Cogitating" "Combobulating" "Composing" "Computing"
+    "Concocting" "Considering" "Contemplating" "Cooking" "Crafting"
+    "Crunching" "Crystallizing" "Cultivating" "Deciphering" "Deliberating"
+    "Dilly-dallying" "Discombobulating" "Doodling" "Drizzling"
+    "Effecting" "Elucidating" "Embellishing" "Enchanting" "Envisioning"
+    "Fermenting" "Fiddle-faddling" "Finagling" "Flibbertigibbeting"
+    "Flowing" "Flummoxing" "Fluttering" "Forging" "Frolicking" "Frosting"
+    "Gallivanting" "Galloping" "Garnishing" "Generating" "Germinating"
+    "Grooving" "Gusting" "Harmonizing" "Hashing" "Hatching" "Herding"
+    "Honking" "Hullaballooing" "Hyperspacing" "Ideating" "Imagining"
+    "Improvising" "Incubating" "Inferring" "Infusing" "Ionizing"
+    "Jitterbugging" "Julienning" "Kneading" "Leavening" "Levitating"
+    "Lollygagging" "Manifesting" "Marinating" "Meandering"
+    "Metamorphosing" "Misting" "Moonwalking" "Moseying" "Mulling"
+    "Mustering" "Musing" "Nebulizing" "Nesting" "Noodling" "Nucleating"
+    "Orbiting" "Orchestrating" "Osmosing" "Perambulating" "Percolating"
+    "Perusing" "Philosophising" "Pondering" "Pontificating" "Pouncing"
+    "Precipitating" "Prestidigitating" "Proofing" "Propagating"
+    "Puttering" "Puzzling" "Razzle-dazzling" "Razzmatazzing"
+    "Recombobulating" "Reticulating" "Roosting" "Ruminating" "Scheming"
+    "Scampering" "Schlepping" "Scurrying" "Seasoning" "Shenaniganing"
+    "Shimmying" "Simmering" "Skedaddling" "Sketching" "Slithering"
+    "Smooshing" "Spelunking" "Spinning" "Sprouting" "Stewing"
+    "Sublimating" "Swirling" "Swooping" "Synthesizing" "Tempering"
+    "Thinking" "Thundering" "Tinkering" "Tomfoolering" "Topsy-turvying"
+    "Transfiguring" "Transmuting" "Twisting" "Undulating" "Unfurling"
+    "Vibing" "Waddling" "Wandering" "Warping" "Whirlpooling" "Whirring"
+    "Whisking" "Wibbling" "Wrangling" "Zesting" "Zigzagging")
+  "Fun status verbs — same list as Claude Code's spinner.")
 
 (defvar magnus-process--stream-spinner-frames
   ["⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏"]
@@ -729,20 +757,26 @@ messages are sent via the command buffer."
                                    (floor elapsed 60)
                                    (mod (floor elapsed) 60))
                          (format "%ds" (floor elapsed))))
-             (info (if (> tools 0)
-                       (format "%s · %d tool%s"
-                               time-str tools
-                               (if (= tools 1) "" "s"))
-                     time-str)))
+             ;; CC-style: (elapsed · N tool uses)
+             (parts (list time-str))
+             (_ (when (> tools 0)
+                  (setq parts
+                        (append parts
+                                (list
+                                 (format "%d tool %s"
+                                         tools
+                                         (if (= tools 1)
+                                             "use" "uses"))))))))
         (setq header-line-format
               (list " "
                     (propertize spinner 'face 'success)
                     " "
                     (propertize (concat verb "...")
                                 'face '(:weight bold))
-                    "  "
-                    (propertize (format "(%s)" info)
-                                'face 'font-lock-comment-face)))
+                    (propertize
+                     (format " (%s)"
+                             (string-join parts " · "))
+                     'face 'font-lock-comment-face)))
         (force-mode-line-update)))))
 
 (defun magnus-process--stream-p (instance)
