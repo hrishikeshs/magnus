@@ -40,6 +40,11 @@
 ;; Buffer-local variables set in magnus-process-stream-mode
 (defvar magnus-process--stream-tool-markers)
 (defvar magnus-process--stream-last-speaker)
+(defvar magnus-process--stream-status-timer)
+(defvar magnus-process--stream-status-start)
+(defvar magnus-process--stream-status-verb)
+(defvar magnus-process--stream-status-spinner-idx)
+(defvar magnus-process--stream-status-tool-count)
 
 ;;; Process creation
 
@@ -639,6 +644,18 @@ Messages sent before this are queued in `--stream-pending'.")
 (defvar magnus-process--stream-pending (make-hash-table :test 'equal)
   "Hash table: instance-id -> list of messages queued before init handshake.")
 
+(defvar magnus-process--stream-status-verbs
+  '("Pondering" "Scheming" "Lollygagging" "Musing" "Deliberating"
+    "Ruminating" "Cogitating" "Daydreaming" "Noodling" "Tinkering"
+    "Brainstorming" "Mulling" "Contemplating" "Plotting"
+    "Concocting" "Brewing" "Crafting" "Weaving" "Hatching"
+    "Riffing")
+  "Fun status verbs shown while a stream agent is working.")
+
+(defvar magnus-process--stream-spinner-frames
+  ["⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏"]
+  "Braille spinner animation frames.")
+
 (define-derived-mode magnus-process-stream-mode special-mode "Stream"
   "Major mode for stream-JSON Claude Code output buffers.
 Shows structured output from a stream agent.  Read-only;
@@ -648,10 +665,85 @@ messages are sent via the command buffer."
   (setq-local word-wrap t)
   (setq-local magnus-process--stream-tool-markers
               (make-hash-table :test 'equal))
-  (setq-local magnus-process--stream-last-speaker nil))
+  (setq-local magnus-process--stream-last-speaker nil)
+  (setq-local magnus-process--stream-status-timer nil)
+  (setq-local magnus-process--stream-status-start nil)
+  (setq-local magnus-process--stream-status-verb nil)
+  (setq-local magnus-process--stream-status-spinner-idx 0)
+  (setq-local magnus-process--stream-status-tool-count 0)
+  (setq header-line-format
+        (magnus-process--stream-header-idle)))
 
 (let ((map magnus-process-stream-mode-map))
   (define-key map (kbd "q") #'quit-window))
+
+;;; Stream status animation — CC-style "Lollygagging..." header
+
+(defun magnus-process--stream-header-idle ()
+  "Return `header-line-format' for an idle stream agent."
+  (list " " (propertize "ready" 'face 'font-lock-comment-face)))
+
+(defun magnus-process--stream-status-begin (buffer)
+  "Start the animated status display in BUFFER."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (setq magnus-process--stream-status-start (float-time))
+      (setq magnus-process--stream-status-verb
+            (nth (random (length magnus-process--stream-status-verbs))
+                 magnus-process--stream-status-verbs))
+      (setq magnus-process--stream-status-spinner-idx 0)
+      (setq magnus-process--stream-status-tool-count 0)
+      (when magnus-process--stream-status-timer
+        (cancel-timer magnus-process--stream-status-timer))
+      (setq magnus-process--stream-status-timer
+            (run-with-timer 0 0.08
+                            #'magnus-process--stream-status-tick
+                            buffer)))))
+
+(defun magnus-process--stream-status-end (buffer)
+  "Stop the animated status display in BUFFER."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (when magnus-process--stream-status-timer
+        (cancel-timer magnus-process--stream-status-timer)
+        (setq magnus-process--stream-status-timer nil))
+      (setq header-line-format
+            (magnus-process--stream-header-idle))
+      (force-mode-line-update))))
+
+(defun magnus-process--stream-status-tick (buffer)
+  "Advance spinner and update header line in BUFFER."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (setq magnus-process--stream-status-spinner-idx
+            (mod (1+ magnus-process--stream-status-spinner-idx)
+                 (length magnus-process--stream-spinner-frames)))
+      (let* ((elapsed (- (float-time)
+                         magnus-process--stream-status-start))
+             (spinner (aref magnus-process--stream-spinner-frames
+                           magnus-process--stream-status-spinner-idx))
+             (verb magnus-process--stream-status-verb)
+             (tools magnus-process--stream-status-tool-count)
+             (time-str (if (>= elapsed 60)
+                           (format "%dm %ds"
+                                   (floor elapsed 60)
+                                   (mod (floor elapsed) 60))
+                         (format "%ds" (floor elapsed))))
+             (info (if (> tools 0)
+                       (format "%s · %d tool%s"
+                               time-str tools
+                               (if (= tools 1) "" "s"))
+                     time-str)))
+        (setq header-line-format
+              (list " "
+                    (propertize spinner 'face 'success)
+                    " "
+                    (propertize (concat verb "...")
+                                'face '(:weight bold))
+                    "  "
+                    (propertize (format "(%s)" info)
+                                'face 'font-lock-comment-face)))
+        (force-mode-line-update)))))
 
 (defun magnus-process--stream-p (instance)
   "Return non-nil if INSTANCE is a stream-JSON agent."
@@ -790,6 +882,9 @@ If the init handshake isn't complete yet, queues the message."
               (setq magnus-process--stream-last-speaker 'user)))))
       ;; Mark as actively processing
       (magnus-instances-update instance :status 'running)
+      ;; Start animated status header
+      (when-let ((buf (magnus-instance-buffer instance)))
+        (magnus-process--stream-status-begin buf))
       ;; Notify command buffer
       (magnus-process--stream-notify
        instance 'stream-working
@@ -936,6 +1031,9 @@ PARTIAL is the incomplete line from previous call.  Returns new partial."
                                (puthash tool-id (point-marker)
                                         magnus-process--stream-tool-markers))
                              (insert "\n")
+                             ;; Increment tool count for status
+                             (cl-incf
+                              magnus-process--stream-status-tool-count)
                              ;; For Edit, show diff inline
                              (when (string= tool-name "Edit")
                                (magnus-process--stream-render-diff
@@ -998,6 +1096,9 @@ PARTIAL is the incomplete line from previous call.  Returns new partial."
                       'face 'font-lock-warning-face)))
                   ;; Agent finished this turn — mark idle
                   (magnus-instances-update instance :status 'idle)
+                  ;; Stop animated status header
+                  (magnus-process--stream-status-end
+                   (current-buffer))
                   ;; Reset speaker tracking for next turn
                   (setq magnus-process--stream-last-speaker nil)
                   ;; Notify command buffer
@@ -1112,6 +1213,9 @@ is the control_request ID to respond to."
       (remhash id magnus-process--stream-pending)
       ;; Update status — process died
       (magnus-instances-update instance :status 'stopped)
+      ;; Stop animated status header
+      (when-let ((buf (magnus-instance-buffer instance)))
+        (magnus-process--stream-status-end buf))
       ;; Log to output buffer
       (when-let ((buf (process-buffer proc)))
         (when (buffer-live-p buf)
