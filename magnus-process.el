@@ -37,6 +37,9 @@
 (defvar magnus-process--stream-procs)
 (defvar magnus-process--stream-ready)
 (defvar magnus-process--stream-pending)
+;; Buffer-local variables set in magnus-process-stream-mode
+(defvar magnus-process--stream-tool-markers)
+(defvar magnus-process--stream-last-speaker)
 
 ;;; Process creation
 
@@ -642,7 +645,10 @@ Shows structured output from a stream agent.  Read-only;
 messages are sent via the command buffer."
   :group 'magnus
   (setq-local truncate-lines nil)
-  (setq-local word-wrap t))
+  (setq-local word-wrap t)
+  (setq-local magnus-process--stream-tool-markers
+              (make-hash-table :test 'equal))
+  (setq-local magnus-process--stream-last-speaker nil))
 
 (let ((map magnus-process-stream-mode-map))
   (define-key map (kbd "q") #'quit-window))
@@ -673,12 +679,13 @@ Returns the new instance."
         (magnus-process-stream-mode)
         (let ((inhibit-read-only t))
           (erase-buffer)
-          (insert (propertize (format "Stream agent: %s\n" instance-name)
-                              'face 'font-lock-keyword-face))
-          (insert (propertize (format "Directory: %s\n" dir)
+          (insert (propertize (format " %s " instance-name)
+                              'face '(:weight bold :height 1.1)))
+          (insert (propertize (format " %s\n" (abbreviate-file-name dir))
                               'face 'font-lock-comment-face))
-          (insert (propertize "--- Output ---\n\n"
-                              'face 'magnus-trace-separator))))
+          (insert (propertize (make-string 40 ?━)
+                              'face 'magnus-trace-separator))
+          (insert "\n")))
       (magnus-instances-update instance :buffer buffer :status 'running))
     ;; Spawn the persistent process
     (magnus-process--stream-spawn instance)
@@ -773,10 +780,14 @@ If the init handshake isn't complete yet, queues the message."
           (with-current-buffer buf
             (let ((inhibit-read-only t))
               (goto-char (point-max))
-              (insert (propertize (format "\n[%s] user: "
-                                          (format-time-string "%H:%M"))
-                                  'face 'font-lock-comment-face))
-              (insert message "\n\n")))))
+              (insert "\n")
+              (insert (propertize
+                       (format " %s  " (format-time-string "%H:%M"))
+                       'face 'font-lock-comment-face))
+              (insert (propertize "user" 'face '(:weight bold)))
+              (insert "\n")
+              (insert message "\n")
+              (setq magnus-process--stream-last-speaker 'user)))))
       ;; Mark as actively processing
       (magnus-instances-update instance :status 'running)
       ;; Notify command buffer
@@ -873,6 +884,16 @@ PARTIAL is the incomplete line from previous call.  Returns new partial."
                     (message "Magnus: captured session %s for %s"
                              sid (magnus-instance-name instance)))))
                ("assistant"
+                ;; Agent header when speaker changes
+                (unless (eq magnus-process--stream-last-speaker 'assistant)
+                  (insert "\n")
+                  (insert (propertize
+                           (format " %s  " (format-time-string "%H:%M"))
+                           'face 'font-lock-comment-face))
+                  (insert (propertize (magnus-instance-name instance)
+                                      'face '(:weight bold)))
+                  (insert "\n")
+                  (setq magnus-process--stream-last-speaker 'assistant))
                 (when-let ((content (alist-get 'content
                                                (alist-get 'message json))))
                   (when (vectorp content)
@@ -880,46 +901,94 @@ PARTIAL is the incomplete line from previous call.  Returns new partial."
                       (pcase (alist-get 'type block)
                         ("text"
                          (let ((text (alist-get 'text block)))
-                           (insert text)
+                           (when (and text (not (string-empty-p text)))
+                             (insert text)
+                             (unless (string-suffix-p "\n" text)
+                               (insert "\n")))
                            ;; Notify command buffer
                            (magnus-process--stream-notify
                             instance 'agent-reply :text text)))
                         ("tool_use"
-                         (let ((tool-name (alist-get 'name block))
-                               (tool-input (alist-get 'input block)))
+                         (let* ((tool-id (alist-get 'id block))
+                                (tool-name (alist-get 'name block))
+                                (tool-input (alist-get 'input block)))
                            (if (string= tool-name "AskUserQuestion")
                                ;; Special rendering for questions
                                (magnus-process--stream-render-question
                                 instance tool-input)
-                             (insert
-                              (propertize
-                               (format "  [%s] %s\n" tool-name
-                                       (magnus-process--stream-tool-summary
-                                        tool-name tool-input))
-                               'face 'font-lock-type-face))))))))))
+                             ;; Render tool call with ▸ prefix
+                             (insert (propertize "▸ " 'face
+                                                 'font-lock-type-face))
+                             (insert (propertize tool-name 'face
+                                                 'font-lock-keyword-face))
+                             (let ((display
+                                    (magnus-process--stream-tool-display
+                                     tool-name tool-input instance)))
+                               (when (and display
+                                          (not (string-empty-p display)))
+                                 (insert " ")
+                                 (insert (propertize
+                                          display
+                                          'face
+                                          'font-lock-string-face))))
+                             ;; Save marker for ✓/✗ result
+                             (when tool-id
+                               (puthash tool-id (point-marker)
+                                        magnus-process--stream-tool-markers))
+                             (insert "\n")
+                             ;; For Edit, show diff inline
+                             (when (string= tool-name "Edit")
+                               (magnus-process--stream-render-diff
+                                tool-input))))))))))
                ("user"
-                ;; Tool results — brief indicator
+                ;; Tool results — append ✓/✗ to the tool call line
                 (when-let ((content (alist-get 'content
                                                (alist-get 'message json))))
                   (when (vectorp content)
                     (seq-doseq (block content)
                       (when (string= (alist-get 'type block) "tool_result")
-                        (let ((is-error (eq (alist-get 'is_error block) t)))
-                          (insert
-                           (propertize
-                            (if is-error "  [error]\n" "  [done]\n")
-                            'face (if is-error
-                                      'font-lock-warning-face
-                                    'font-lock-comment-face)))))))))
+                        (let* ((tool-use-id
+                                (alist-get 'tool_use_id block))
+                               (is-error
+                                (eq (alist-get 'is_error block) t))
+                               (marker
+                                (and tool-use-id
+                                     magnus-process--stream-tool-markers
+                                     (gethash tool-use-id
+                                              magnus-process--stream-tool-markers))))
+                          (if marker
+                              ;; Insert ✓/✗ at the saved marker position
+                              (progn
+                                (save-excursion
+                                  (goto-char marker)
+                                  (insert
+                                   (if is-error
+                                       (propertize " ✗" 'face 'error)
+                                     (propertize " ✓" 'face 'success))))
+                                (remhash tool-use-id
+                                         magnus-process--stream-tool-markers))
+                            ;; No marker — fallback to inline indicator
+                            (insert
+                             (propertize
+                              (if is-error "  ✗ error\n" "")
+                              'face (if is-error
+                                        'font-lock-warning-face
+                                      'font-lock-comment-face))))))))))
                ("result"
                 (let ((turns (alist-get 'num_turns json))
                       (denials (alist-get 'permission_denials json)))
+                  (insert "\n")
                   (insert
                    (propertize
-                    (format "\n--- Done (%d turn%s) ---\n"
+                    (format "━━ Done (%d turn%s) "
                             (or turns 0)
                             (if (= (or turns 0) 1) "" "s"))
                     'face 'magnus-trace-separator))
+                  (insert
+                   (propertize
+                    (make-string 30 ?━)
+                    'face 'magnus-trace-separator))
+                  (insert "\n")
                   ;; Report permission denials
                   (when (and denials (> (length denials) 0))
                     (insert
@@ -929,6 +998,8 @@ PARTIAL is the incomplete line from previous call.  Returns new partial."
                       'face 'font-lock-warning-face)))
                   ;; Agent finished this turn — mark idle
                   (magnus-instances-update instance :status 'idle)
+                  ;; Reset speaker tracking for next turn
+                  (setq magnus-process--stream-last-speaker nil)
                   ;; Notify command buffer
                   (magnus-process--stream-notify
                    instance 'stream-done
@@ -966,23 +1037,12 @@ JSON is the parsed control_request object."
        (let ((tool-name (alist-get 'tool_name request))
              (tool-input (alist-get 'input request)))
          (if (magnus-permission--auto-approve-p tool-name tool-input instance)
-             ;; Auto-approve
+             ;; Auto-approve (tool already rendered by assistant event)
              (progn
                (magnus-process--stream-respond
                 proc request-id '((behavior . "allow")))
-               (magnus-permission--log-auto-approved instance tool-name tool-input)
-               ;; Render in output buffer
-               (when-let ((buf (process-buffer proc)))
-                 (when (buffer-live-p buf)
-                   (with-current-buffer buf
-                     (let ((inhibit-read-only t))
-                       (goto-char (point-max))
-                       (insert
-                        (propertize
-                         (format "  [%s] %s\n" tool-name
-                                 (magnus-process--stream-tool-summary
-                                  tool-name tool-input))
-                         'face 'font-lock-type-face)))))))
+               (magnus-permission--log-auto-approved
+                instance tool-name tool-input))
            ;; Need user input — schedule y-or-n-p (can't block in filter)
            (run-at-time
             0 nil
@@ -1023,39 +1083,16 @@ is the control_request ID to respond to."
         (progn
           (magnus-process--stream-respond
            proc request-id '((behavior . "allow")))
-          ;; Log approval
-          (magnus-permission--log-auto-approved instance tool-name tool-input)
-          ;; Render in output buffer
-          (when-let ((buf (magnus-instance-buffer instance)))
-            (when (buffer-live-p buf)
-              (with-current-buffer buf
-                (let ((inhibit-read-only t))
-                  (goto-char (point-max))
-                  (insert
-                   (propertize
-                    (format "  [%s] %s\n" tool-name
-                            (magnus-process--stream-tool-summary
-                             tool-name tool-input))
-                    'face 'font-lock-type-face)))))))
+          (magnus-permission--log-auto-approved
+           instance tool-name tool-input))
       ;; Denied
       (magnus-process--stream-respond
        proc request-id '((behavior . "deny")
                           (message . "Denied by user via Magnus")))
-      ;; Log denial
       (magnus-process--stream-notify
        instance 'stream-permission
        :text (format "DENIED: %s" summary)
-       :allowed nil)
-      ;; Render in output buffer
-      (when-let ((buf (magnus-instance-buffer instance)))
-        (when (buffer-live-p buf)
-          (with-current-buffer buf
-            (let ((inhibit-read-only t))
-              (goto-char (point-max))
-              (insert
-               (propertize
-                (format "  [DENIED] %s\n" summary)
-                'face 'font-lock-warning-face)))))))))
+       :allowed nil))))
 
 ;;; Stream sentinel — process death handling
 
@@ -1128,6 +1165,59 @@ is the control_request ID to respond to."
     ("Grep" (or (alist-get 'pattern tool-input) ""))
     ("Task" (or (alist-get 'description tool-input) ""))
     (_ "")))
+
+(defun magnus-process--stream-compact-path (path dir)
+  "Strip DIR prefix from PATH for compact display."
+  (let ((d (file-name-as-directory (or dir ""))))
+    (cond
+     ((and path (string-prefix-p d path))
+      (substring path (length d)))
+     (path (abbreviate-file-name path))
+     (t ""))))
+
+(defun magnus-process--stream-tool-display (tool-name tool-input instance)
+  "Format TOOL-NAME with TOOL-INPUT for live display.
+Compacts paths relative to INSTANCE working directory."
+  (let ((dir (magnus-instance-directory instance)))
+    (pcase tool-name
+      ((or "Read" "Write")
+       (magnus-process--stream-compact-path
+        (or (alist-get 'file_path tool-input)
+            (alist-get 'filePath tool-input))
+        dir))
+      ("Edit"
+       (magnus-process--stream-compact-path
+        (or (alist-get 'file_path tool-input)
+            (alist-get 'filePath tool-input))
+        dir))
+      ((or "Bash" "Zsh")
+       (let ((cmd (or (alist-get 'command tool-input) "")))
+         (if (> (length cmd) 60)
+             (concat (substring cmd 0 57) "...")
+           cmd)))
+      ("Glob" (or (alist-get 'pattern tool-input) ""))
+      ("Grep"
+       (let ((pattern (or (alist-get 'pattern tool-input) ""))
+             (path (alist-get 'path tool-input)))
+         (if path
+             (format "%s in %s" pattern
+                     (magnus-process--stream-compact-path path dir))
+           pattern)))
+      ("Task" (or (alist-get 'description tool-input) ""))
+      (_ ""))))
+
+(defun magnus-process--stream-render-diff (tool-input)
+  "Render Edit diff from TOOL-INPUT inline in the output buffer."
+  (let ((old-str (alist-get 'old_string tool-input))
+        (new-str (alist-get 'new_string tool-input)))
+    (when (and old-str (not (string-empty-p old-str)))
+      (dolist (line (split-string old-str "\n"))
+        (insert (propertize (format "          - %s\n" line)
+                            'face 'diff-removed))))
+    (when (and new-str (not (string-empty-p new-str)))
+      (dolist (line (split-string new-str "\n"))
+        (insert (propertize (format "          + %s\n" line)
+                            'face 'diff-added))))))
 
 (defun magnus-process--stream-render-question (instance tool-input)
   "Render an AskUserQuestion TOOL-INPUT and prompt the user.
