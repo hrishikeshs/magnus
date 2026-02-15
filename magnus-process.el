@@ -93,10 +93,44 @@ the full message text before submitting."
                             (with-current-buffer buffer
                               (vterm-send-return)))))))))
 
+(defun magnus-process--agent-memory-path (instance)
+  "Return the memory file path for INSTANCE.
+Path is <directory>/.claude/agents/<name>/memory.md."
+  (expand-file-name
+   (format ".claude/agents/%s/memory.md" (magnus-instance-name instance))
+   (magnus-instance-directory instance)))
+
+(defun magnus-process--ensure-agent-dir (instance)
+  "Ensure the agent directory exists for INSTANCE."
+  (let ((dir (file-name-directory (magnus-process--agent-memory-path instance))))
+    (unless (file-directory-p dir)
+      (make-directory dir t))))
+
 (defun magnus-process--onboarding-message (instance)
-  "Generate onboarding message for INSTANCE."
-  (let ((name (magnus-instance-name instance)))
-    (format "Welcome! You are agent '%s', part of a multi-agent team managed by Magnus (an Emacs coordination tool). Other agents may be working in this project right now.
+  "Generate onboarding message for INSTANCE.
+If the agent has a memory file from previous sessions, includes
+instructions to read it first.  If a previous session trace exists,
+includes that path too."
+  (let* ((name (magnus-instance-name instance))
+         (memory-path (magnus-process--agent-memory-path instance))
+         (has-memory (file-exists-p memory-path))
+         (prev-session (magnus-instance-previous-session-id instance))
+         (prev-trace (when prev-session
+                       (magnus-process--session-jsonl-path
+                        (magnus-instance-directory instance)
+                        prev-session)))
+         (memory-preamble
+          (when has-memory
+            (concat
+             (format "You are %s. You've worked in this project before — your accumulated memory is at .claude/agents/%s/memory.md. Read it now; that file is you from previous sessions."
+                     name name)
+             (if prev-trace
+                 (format " Your most recent session trace is at %s — skim it to catch up on what just happened.\n\n"
+                         prev-trace)
+               "\n\n")))))
+    (concat
+     (or memory-preamble "")
+     (format "Welcome%s! You are agent '%s', part of a multi-agent team managed by Magnus (an Emacs coordination tool). Other agents may be working in this project right now.
 
 Before you start coding, please go through these steps — they keep everyone in sync:
 
@@ -114,7 +148,8 @@ While working:
 - Check .magnus-coord.md periodically for messages and discoveries.
 
 Please start with step 1 now."
-            name)))
+             (if has-memory " back" "")
+             name))))
 
 (defun magnus-process--list-sessions (directory)
   "List all session IDs for DIRECTORY.
@@ -292,12 +327,17 @@ If FORCE is non-nil, forcefully terminate."
   "Set of instance IDs currently mid-restart, to prevent double-spawn.")
 
 (defun magnus-process-restart (instance)
-  "Restart the Claude Code process for INSTANCE."
+  "Restart the Claude Code process for INSTANCE.
+Preserves the current session-id as previous-session-id so the
+new incarnation can read its predecessor's thinking trace."
   (let ((id (magnus-instance-id instance)))
     (when (member id magnus-process--restarting)
       (user-error "Instance '%s' is already restarting"
                   (magnus-instance-name instance)))
     (push id magnus-process--restarting)
+    ;; Save current session as previous before killing
+    (when-let ((session (magnus-instance-session-id instance)))
+      (magnus-instances-update instance :previous-session-id session))
     (magnus-process-kill instance)
     (run-with-timer
      1.5 nil

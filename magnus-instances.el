@@ -27,7 +27,8 @@
   (buffer nil :documentation "The vterm buffer running claude.")
   (created-at nil :documentation "Creation timestamp.")
   (status 'stopped :documentation "Status: running, stopped, suspended.")
-  (session-id nil :documentation "Claude Code session ID for this instance."))
+  (session-id nil :documentation "Claude Code session ID for this instance.")
+  (previous-session-id nil :documentation "Session ID from before last restart."))
 
 ;;; Registry
 
@@ -99,7 +100,8 @@ PROPERTIES is a plist of slot names and values."
         (:buffer (setf (magnus-instance-buffer instance) value))
         (:status (setf (magnus-instance-status instance) value))
         (:directory (setf (magnus-instance-directory instance) value))
-        (:session-id (setf (magnus-instance-session-id instance) value)))))
+        (:session-id (setf (magnus-instance-session-id instance) value))
+        (:previous-session-id (setf (magnus-instance-previous-session-id instance) value)))))
   (run-hooks 'magnus-instances-changed-hook)
   instance)
 
@@ -132,7 +134,8 @@ Returns the new instance (not yet added to registry)."
         :name (magnus-instance-name instance)
         :directory (magnus-instance-directory instance)
         :created-at (magnus-instance-created-at instance)
-        :session-id (magnus-instance-session-id instance)))
+        :session-id (magnus-instance-session-id instance)
+        :previous-session-id (magnus-instance-previous-session-id instance)))
 
 (defun magnus-instances-deserialize (plist)
   "Deserialize PLIST to an instance."
@@ -143,7 +146,8 @@ Returns the new instance (not yet added to registry)."
    :buffer nil
    :created-at (plist-get plist :created-at)
    :status 'stopped
-   :session-id (plist-get plist :session-id)))
+   :session-id (plist-get plist :session-id)
+   :previous-session-id (plist-get plist :previous-session-id)))
 
 (provide 'magnus-instances)
 ;;; magnus-instances.el ends here

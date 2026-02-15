@@ -236,15 +236,22 @@ Keeps only the last `magnus-coord-log-max-entries' entries."
   (remove-hook 'pre-command-hook #'magnus-coord--on-user-return)
   (setq magnus-coord--user-idle-p nil))
 
+(declare-function magnus-process--agent-memory-path "magnus-process")
+(declare-function magnus-process--ensure-agent-dir "magnus-process")
+
 (defun magnus-coord--on-user-idle ()
   "Called when the user has been idle for `magnus-coord-idle-threshold'.
-Sends a sleep message to all running agents and suppresses nudges."
+Tells agents to consolidate their memory and go to sleep."
   (setq magnus-coord--user-idle-p t)
   (dolist (instance (magnus-instances-list))
     (when (eq (magnus-instance-status instance) 'running)
-      (magnus-coord-nudge-agent
-       instance
-       "The user appears to be away from keyboard. Please go to sleep — no need to check coordination or do anything until they return. I'll wake you up when they're back.")))
+      (let* ((name (magnus-instance-name instance))
+             (memory-rel (format ".claude/agents/%s/memory.md" name)))
+        (magnus-process--ensure-agent-dir instance)
+        (magnus-coord-nudge-agent
+         instance
+         (format "The user is away. Before you sleep, update your memory file at %s — write down what matters from this session: key decisions, things you learned, gotchas, unfinished work, your relationships with other agents. This file persists across restarts — it's how future-you remembers. Then go to sleep and wait quietly."
+                 memory-rel)))))
   (add-hook 'pre-command-hook #'magnus-coord--on-user-return))
 
 (defun magnus-coord--on-user-return ()

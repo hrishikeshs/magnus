@@ -137,14 +137,41 @@ Tries Projectile first (non-interactive), then `project.el' with
     "deer" "crow" "lynx" "hare" "wren")
   "Nouns for generating instance names.")
 
-(defun magnus-generate-instance-name (_directory)
-  "Generate a random instance name not already in use.
-DIRECTORY is ignored but accepted for API consistency."
-  (let ((existing (mapcar #'magnus-instance-name (magnus-instances-list)))
-        (attempts 0)
+(defun magnus-generate-instance-name (directory)
+  "Generate an instance name, preferring dormant identities.
+Scans DIRECTORY for agents with memory files from previous sessions.
+If a dormant identity exists (not currently in use), resurrects the
+most recently active one.  Otherwise generates a fresh random name."
+  (let ((existing (mapcar #'magnus-instance-name (magnus-instances-list))))
+    (or (magnus--resurrect-dormant-identity directory existing)
+        (magnus--generate-random-name existing))))
+
+(defun magnus--resurrect-dormant-identity (directory existing-names)
+  "Find a dormant agent identity to resurrect in DIRECTORY.
+EXISTING-NAMES is a list of names already in use.
+Returns the name of the most recently active dormant identity, or nil."
+  (let* ((agents-dir (expand-file-name ".claude/agents/" directory))
+         (candidates nil))
+    (when (file-directory-p agents-dir)
+      (dolist (entry (directory-files agents-dir nil "\\`[^.]"))
+        (let ((memory (expand-file-name (concat entry "/memory.md") agents-dir)))
+          (when (and (file-exists-p memory)
+                     (not (member entry existing-names)))
+            (push (cons entry (file-attribute-modification-time
+                               (file-attributes memory)))
+                  candidates)))))
+    ;; Return most recently modified (most experienced agent first)
+    (when candidates
+      (car (car (sort candidates
+                      (lambda (a b)
+                        (time-less-p (cdr b) (cdr a)))))))))
+
+(defun magnus--generate-random-name (existing-names)
+  "Generate a random name not in EXISTING-NAMES."
+  (let ((attempts 0)
         name)
     (while (and (< attempts 100)
-                (or (null name) (member name existing)))
+                (or (null name) (member name existing-names)))
       (setq name (format "%s-%s"
                          (nth (random (length magnus--name-adjectives))
                               magnus--name-adjectives)
