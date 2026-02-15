@@ -60,6 +60,15 @@ Older entries are trimmed automatically.  Set to nil to disable."
                  (const :tag "Unlimited" nil))
   :group 'magnus)
 
+(defcustom magnus-coord-idle-threshold 300
+  "Seconds of inactivity before telling agents to sleep.
+When the user is idle for this long, a sleep message is sent to
+all running agents and periodic nudges are suppressed.  When the
+user returns, a wake-up message is sent.  Set to nil to disable."
+  :type '(choice (integer :tag "Seconds")
+                 (const :tag "Disabled" nil))
+  :group 'magnus)
+
 ;;; Atomic file writes
 
 (defun magnus-coord--write-file-atomic (file)
@@ -87,19 +96,21 @@ This prevents partial reads when agents write concurrently."
   "Timer for periodic coordination reminders.")
 
 (defun magnus-coord-start-reminders ()
-  "Start periodic coordination reminders."
+  "Start periodic coordination reminders and AFK detection."
   (magnus-coord-stop-reminders)
   (when magnus-coord-reminder-interval
     (setq magnus-coord--reminder-timer
           (run-with-timer magnus-coord-reminder-interval
                          magnus-coord-reminder-interval
-                         #'magnus-coord--send-reminders))))
+                         #'magnus-coord--send-reminders)))
+  (magnus-coord--start-idle-watch))
 
 (defun magnus-coord-stop-reminders ()
-  "Stop periodic coordination reminders."
+  "Stop periodic coordination reminders and AFK detection."
   (when magnus-coord--reminder-timer
     (cancel-timer magnus-coord--reminder-timer)
-    (setq magnus-coord--reminder-timer nil)))
+    (setq magnus-coord--reminder-timer nil))
+  (magnus-coord--stop-idle-watch))
 
 (defvar magnus-coord--reminder-templates
   '("Hey %s — take a quick look at .magnus-coord.md. Any messages for you? Anything you've learned that other agents should know? Drop it in the Discoveries section."
@@ -127,22 +138,28 @@ Suppresses periodic nudges for this agent until the next interval."
          (interval (or magnus-coord-reminder-interval 600)))
     (and last (< (- (float-time) last) interval))))
 
+(defvar magnus-coord--user-idle-p nil
+  "Non-nil when the user has been detected as AFK.
+Set by `magnus-coord--on-user-idle', cleared by `magnus-coord--on-user-return'.")
+
 (defun magnus-coord--send-reminders ()
   "Send a coordination reminder to idle instances.
 Skips agents that were recently contacted by the user.
+Suppressed entirely when the user is AFK.
 Rotates through different messages to keep agents attentive."
-  (let ((template (nth (mod magnus-coord--reminder-index
-                            (length magnus-coord--reminder-templates))
-                       magnus-coord--reminder-templates)))
-    (dolist (instance (magnus-instances-list))
-      (when (and (eq (magnus-instance-status instance) 'running)
-                 (not (magnus-coord--recently-contacted-p instance)))
-        (magnus-coord-nudge-agent
-         instance
-         (format template (magnus-instance-name instance)))))
-    (setq magnus-coord--reminder-index
-          (1+ magnus-coord--reminder-index)))
-  ;; Trim logs while we're at it
+  (unless magnus-coord--user-idle-p
+    (let ((template (nth (mod magnus-coord--reminder-index
+                              (length magnus-coord--reminder-templates))
+                         magnus-coord--reminder-templates)))
+      (dolist (instance (magnus-instances-list))
+        (when (and (eq (magnus-instance-status instance) 'running)
+                   (not (magnus-coord--recently-contacted-p instance)))
+          (magnus-coord-nudge-agent
+           instance
+           (format template (magnus-instance-name instance)))))
+      (setq magnus-coord--reminder-index
+            (1+ magnus-coord--reminder-index))))
+  ;; Trim logs while we're at it (even when idle)
   (magnus-coord-trim-all))
 
 ;;; Log trimming
@@ -197,6 +214,51 @@ Keeps only the last `magnus-coord-log-max-entries' entries."
                        (magnus-instances-list)))))
     (dolist (dir dirs)
       (magnus-coord-trim-log dir))))
+
+;;; AFK detection
+
+(defvar magnus-coord--idle-timer nil
+  "Idle timer that fires after `magnus-coord-idle-threshold' seconds.")
+
+(defun magnus-coord--start-idle-watch ()
+  "Start watching for user idleness."
+  (magnus-coord--stop-idle-watch)
+  (when magnus-coord-idle-threshold
+    (setq magnus-coord--idle-timer
+          (run-with-idle-timer magnus-coord-idle-threshold nil
+                              #'magnus-coord--on-user-idle))))
+
+(defun magnus-coord--stop-idle-watch ()
+  "Stop watching for user idleness."
+  (when magnus-coord--idle-timer
+    (cancel-timer magnus-coord--idle-timer)
+    (setq magnus-coord--idle-timer nil))
+  (remove-hook 'pre-command-hook #'magnus-coord--on-user-return)
+  (setq magnus-coord--user-idle-p nil))
+
+(defun magnus-coord--on-user-idle ()
+  "Called when the user has been idle for `magnus-coord-idle-threshold'.
+Sends a sleep message to all running agents and suppresses nudges."
+  (setq magnus-coord--user-idle-p t)
+  (dolist (instance (magnus-instances-list))
+    (when (eq (magnus-instance-status instance) 'running)
+      (magnus-coord-nudge-agent
+       instance
+       "The user appears to be away from keyboard. Please go to sleep — no need to check coordination or do anything until they return. I'll wake you up when they're back.")))
+  (add-hook 'pre-command-hook #'magnus-coord--on-user-return))
+
+(defun magnus-coord--on-user-return ()
+  "Called when the user presses a key after being idle.
+Sends a wake-up message to all running agents and re-arms the idle timer."
+  (remove-hook 'pre-command-hook #'magnus-coord--on-user-return)
+  (setq magnus-coord--user-idle-p nil)
+  (dolist (instance (magnus-instances-list))
+    (when (eq (magnus-instance-status instance) 'running)
+      (magnus-coord-nudge-agent
+       instance
+       "The user is back! Resume normal operation — check .magnus-coord.md for any updates.")))
+  ;; Re-arm the idle timer for the next AFK period
+  (magnus-coord--start-idle-watch))
 
 ;;; @mention watching
 
