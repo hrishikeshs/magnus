@@ -191,7 +191,7 @@ Also releases queued instances whose prompts have been handled."
   (unless magnus-attention--checking
     (setq magnus-attention--checking t)
     (unwind-protect
-        (condition-case nil
+        (condition-case err
             (progn
               ;; Add new attention requests
               (dolist (instance (magnus-instances-list))
@@ -201,7 +201,9 @@ Also releases queued instances whose prompts have been handled."
                     (magnus-attention-request instance))))
               ;; Release queued instances that no longer need input
               (magnus-attention--release-handled))
-          (error nil))
+          (error
+           (message "Magnus: attention check error: %s"
+                    (error-message-string err))))
       (setq magnus-attention--checking nil))))
 
 (defun magnus-attention--release-handled ()
@@ -216,12 +218,16 @@ Also releases queued instances whose prompts have been handled."
 
 (defun magnus-attention--needs-input-p (instance)
   "Check if INSTANCE appears to need user input."
-  (condition-case nil
+  (condition-case err
       (let ((buffer (magnus-instance-buffer instance)))
         (when (and buffer (buffer-live-p buffer))
           (with-current-buffer buffer
             (magnus-attention--buffer-has-prompt-p))))
-    (error nil)))
+    (error
+     (message "Magnus: needs-input-p error for %s: %s"
+              (magnus-instance-name instance)
+              (error-message-string err))
+     nil)))
 
 (defun magnus-attention--buffer-has-prompt-p ()
   "Check if current buffer has a prompt in the last few lines."
@@ -241,24 +247,14 @@ Also releases queued instances whose prompts have been handled."
     (when recent
       (mapconcat #'identity recent "\n"))))
 
-(defun magnus-attention--last-line ()
-  "Return the last non-empty line in the current buffer, or nil."
-  (let* ((end (point-max))
-         (start (max (point-min) (- end 500)))
-         (text (buffer-substring-no-properties start end))
-         (lines (split-string text "\n" t "[ \t]+")))
-    (car (last lines))))
-
 
 ;;; Auto-approval
 
-(defvar magnus-attention--prompt-anchors
-  '("\\[y/n\\]" "\\[Y/n\\]" "\\[yes/no\\]" "(y/n)" "(Y/n)"
-    "Allow\\?" "Proceed\\?" "Esc to cancel"
-    "Do you want to proceed")
-  "Patterns confirming a real permission prompt.
-Auto-approve only fires when the tail text matches one of these
-AND an allowlisted tool/command pattern.")
+(defun magnus-attention--prompt-anchors ()
+  "Return the current prompt anchor patterns.
+Derived from `magnus-attention-patterns' so customizations are
+always reflected in auto-approval logic."
+  magnus-attention-patterns)
 
 (defun magnus-attention--try-auto-approve (instance)
   "Try to auto-approve INSTANCE's permission prompt.
@@ -283,7 +279,7 @@ Sends `y' which maps to confirm:yes in all CC prompt formats."
   "Return non-nil if LINE looks like an actual yes/no permission prompt."
   (cl-some (lambda (pattern)
              (string-match-p pattern line))
-           magnus-attention--prompt-anchors))
+           (magnus-attention--prompt-anchors)))
 
 (defun magnus-attention--matches-auto-approve-p (prompt-text)
   "Return non-nil if PROMPT-TEXT matches an auto-approve pattern."

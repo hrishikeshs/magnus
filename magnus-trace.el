@@ -231,20 +231,26 @@
 
 (defun magnus-trace--sync-all ()
   "Auto-refresh all open trace buffers.
-Cancels the timer when no trace buffers remain."
-  (let ((any-live nil))
-    (dolist (instance (magnus-instances-list))
-      (let ((trace-buf (get-buffer (format "*trace:%s*" (magnus-instance-name instance)))))
-        (when (and trace-buf (buffer-live-p trace-buf))
-          (setq any-live t)
-          (with-current-buffer trace-buf
-            (condition-case nil
-                (magnus-trace-refresh)
-              (error nil))))))
-    (unless any-live
-      (when magnus-trace--timer
-        (cancel-timer magnus-trace--timer)
-        (setq magnus-trace--timer nil)))))
+The timer is kept alive even when no trace buffers exist, to avoid
+a race where a buffer is opened between the check and the cancel.
+The timer is cheap (no-op when nothing is open) and is only stopped
+when magnus shuts down."
+  (dolist (instance (magnus-instances-list))
+    (let ((trace-buf (get-buffer (format "*trace:%s*" (magnus-instance-name instance)))))
+      (when (and trace-buf (buffer-live-p trace-buf))
+        (with-current-buffer trace-buf
+          (condition-case err
+              (magnus-trace-refresh)
+            (error
+             (message "Magnus: trace refresh error for %s: %s"
+                      (magnus-instance-name instance)
+                      (error-message-string err)))))))))
+
+(defun magnus-trace-stop-timer ()
+  "Stop the trace auto-refresh timer."
+  (when magnus-trace--timer
+    (cancel-timer magnus-trace--timer)
+    (setq magnus-trace--timer nil)))
 
 (provide 'magnus-trace)
 ;;; magnus-trace.el ends here

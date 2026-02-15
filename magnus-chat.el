@@ -346,7 +346,7 @@ Delays the Return keystroke so the TUI can process the pasted text."
         (progn
           (with-current-buffer buffer
             (vterm-send-string message))
-          (run-with-timer 0.3 nil
+          (run-with-timer 0.5 nil
                           (lambda ()
                             (when (buffer-live-p buffer)
                               (with-current-buffer buffer

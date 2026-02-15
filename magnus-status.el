@@ -111,7 +111,7 @@
   :group 'magnus
   (setq-local revert-buffer-function #'magnus-status--revert)
   (setq-local truncate-lines t)
-  (add-hook 'magnus-instances-changed-hook #'magnus-status--maybe-refresh nil t))
+  (add-hook 'magnus-instances-changed-hook #'magnus-status--maybe-refresh))
 
 ;;; Buffer creation
 
@@ -126,11 +126,11 @@
     (switch-to-buffer buffer)))
 
 (defun magnus-status-refresh ()
-  "Refresh the magnus status buffer.
-Also reconciles coordination files, removing stale entries."
+  "Refresh the magnus status buffer."
   (interactive)
-  ;; Reconcile coord files before redrawing
-  (magnus-coord-reconcile-all)
+  ;; Reconcile only on interactive (manual `g') refresh
+  (when (called-interactively-p 'interactive)
+    (magnus-coord-reconcile-all))
   (when-let ((buffer (get-buffer magnus-buffer-name)))
     (with-current-buffer buffer
       (let ((inhibit-read-only t)
@@ -453,7 +453,7 @@ directory, or `magnus-default-directory', or `default-directory'."
       (let ((msg (read-string (format "Message to %s: "
                                       (magnus-instance-name instance)))))
         (unless (string-empty-p msg)
-          (magnus-coord-send-message instance msg)
+          (magnus-coord-nudge-agent instance msg)
           (message "Sent to %s" (magnus-instance-name instance))))
     (user-error "No instance at point")))
 
