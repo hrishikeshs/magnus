@@ -86,8 +86,5 @@ This is a best-effort operation that looks for existing vterm buffers."
   (setq magnus-persistence--save-timer nil)
   (magnus-persistence-save))
 
-;; Set up autosave when loaded
-(magnus-persistence--setup-autosave)
-
 (provide 'magnus-persistence)
 ;;; magnus-persistence.el ends here

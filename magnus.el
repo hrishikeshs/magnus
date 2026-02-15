@@ -51,6 +51,7 @@
 (require 'cl-lib)
 
 (declare-function magnus-persistence-load "magnus-persistence")
+(declare-function magnus-persistence--setup-autosave "magnus-persistence")
 (declare-function magnus-attention-start "magnus-attention")
 (declare-function magnus-coord-start-reminders "magnus-coord")
 (declare-function magnus-coord-ensure-watchers "magnus-coord")
@@ -108,6 +109,22 @@ Takes the working directory as argument and returns a string."
 (defvar magnus--initialized nil
   "Non-nil if magnus has been initialized.")
 
+;;; Utilities
+
+(defun magnus-project-root ()
+  "Get the current project root if available.
+Tries Projectile first (non-interactive), then `project.el' with
+`maybe' to avoid prompting."
+  (or
+   (when (and (fboundp 'projectile-project-root)
+              (bound-and-true-p projectile-mode))
+     (ignore-errors (projectile-project-root)))
+   (when (fboundp 'project-current)
+     (when-let ((project (project-current 'maybe)))
+       (if (fboundp 'project-root)
+           (project-root project)
+         (car (with-no-warnings (project-roots project))))))))
+
 ;;; Name generation
 
 (defvar magnus--name-adjectives
@@ -152,6 +169,7 @@ DIRECTORY is ignored but accepted for API consistency."
     (require 'magnus-health)
     (require 'magnus-chat)
     (magnus-persistence-load)
+    (magnus-persistence--setup-autosave)
     (magnus-coord-ensure-watchers)
     (magnus-attention-start)
     (magnus-coord-start-reminders)

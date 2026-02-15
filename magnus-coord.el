@@ -60,10 +60,21 @@ Older entries are trimmed automatically.  Set to nil to disable."
                  (const :tag "Unlimited" nil))
   :group 'magnus)
 
+;;; Atomic file writes
+
+(defun magnus-coord--write-file-atomic (file)
+  "Write the current buffer to FILE atomically.
+Writes to a temporary file in the same directory, then renames.
+This prevents partial reads when agents write concurrently."
+  (let ((tmp (make-temp-file
+              (expand-file-name ".magnus-coord-tmp" (file-name-directory file)))))
+    (write-region (point-min) (point-max) tmp nil 'quiet)
+    (rename-file tmp file t)))
+
 ;;; Sending messages to agents
 
-(defun magnus-coord-send-message (instance message)
-  "Send MESSAGE to INSTANCE's vterm buffer as user input."
+(defun magnus-coord-nudge-agent (instance message)
+  "Nudge INSTANCE by sending MESSAGE to its vterm buffer."
   (when-let ((buffer (magnus-instance-buffer instance)))
     (when (buffer-live-p buffer)
       (with-current-buffer buffer
@@ -126,7 +137,7 @@ Rotates through different messages to keep agents attentive."
     (dolist (instance (magnus-instances-list))
       (when (and (eq (magnus-instance-status instance) 'running)
                  (not (magnus-coord--recently-contacted-p instance)))
-        (magnus-coord-send-message
+        (magnus-coord-nudge-agent
          instance
          (format template (magnus-instance-name instance)))))
     (setq magnus-coord--reminder-index
@@ -177,8 +188,7 @@ Keeps only the last `magnus-coord-log-max-entries' entries."
                       (forward-line 1)))
                   (when (< (point) cut-point)
                     (delete-region (point) cut-point))
-                  (write-region (point-min) (point-max)
-                                file nil 'quiet))))))))))
+                  (magnus-coord--write-file-atomic file))))))))))
 
 (defun magnus-coord-trim-all ()
   "Trim coordination file logs for all active project directories."
@@ -203,9 +213,6 @@ instances restored from persistence."
       (when (file-exists-p (magnus-coord-file-path dir))
         (unless (assoc dir magnus-coord--watchers)
           (magnus-coord-start-watching dir))))))
-
-(defvar magnus-coord--last-content nil
-  "Alist of (directory . content-hash) to track changes.")
 
 (defvar magnus-coord--processed-mentions nil
   "Alist of (directory . list-of-processed-mention-hashes) to avoid duplicates.")
@@ -256,9 +263,11 @@ instances restored from persistence."
   "Handle a file change EVENT for DIRECTORY's coordination file."
   (when (and magnus-coord-mention-notify
              (eq (nth 1 event) 'changed))
-    (condition-case nil
+    (condition-case err
         (magnus-coord--check-new-mentions directory)
-      (error nil))))  ; Silently ignore errors
+      (error
+       (message "Magnus: coord file change handler error: %s"
+                (error-message-string err))))))
 
 (defun magnus-coord--check-new-mentions (directory)
   "Check for new @mentions in DIRECTORY's coordination file."
@@ -332,7 +341,7 @@ Formats the message as a direct user instruction so Claude acts on it."
                           (car parsed) (cdr parsed))
                 (format "Another agent mentioned you in .magnus-coord.md: \"%s\" — Read the file, do what's asked, and log your progress there."
                         context-line))))
-    (magnus-coord-send-message instance msg)))
+    (magnus-coord-nudge-agent instance msg)))
 
 ;;; Coordination file management
 
@@ -607,7 +616,7 @@ Returns a plist with :active, :log, and :decisions."
         ;; No Log section, append at end
         (goto-char (point-max))
         (insert (format "\n[%s] %s: %s\n" time agent message)))
-      (write-region (point-min) (point-max) file nil 'quiet))))
+      (magnus-coord--write-file-atomic file))))
 
 (defun magnus-coord-update-active (directory agent area status files)
   "Update AGENT's entry in the Active Work table.
@@ -656,7 +665,7 @@ FILES is a list of files they're touching."
           (insert "|-------|------|--------|-------|\n")
           (insert (format "| %s | %s | %s | %s |\n"
                          agent area status files-str))))
-      (write-region (point-min) (point-max) file nil 'quiet))))
+      (magnus-coord--write-file-atomic file))))
 
 (defun magnus-coord-clear-agent (directory agent)
   "Remove AGENT from the Active Work table in DIRECTORY."
@@ -686,7 +695,7 @@ headers intact.  Called when the last agent leaves a project."
                   (insert "\n")
                   (setq modified t)))))
           (when modified
-            (write-region (point-min) (point-max) file nil 'quiet)))))))
+            (magnus-coord--write-file-atomic file)))))))
 
 (defun magnus-coord-reconcile (directory)
   "Reconcile the Active Work table in DIRECTORY with live instances.
@@ -714,7 +723,7 @@ with stale statuses like done, died, finished, completed, stopped."
                     (delete-region (line-beginning-position)
                                   (min (1+ (line-end-position)) (point-max)))
                   (forward-line 1))))))
-        (write-region (point-min) (point-max) file nil 'quiet)))))
+        (magnus-coord--write-file-atomic file)))))
 
 (defun magnus-coord-reconcile-all ()
   "Reconcile coordination files for all project directories."
@@ -803,7 +812,7 @@ Show at most LIMIT entries (default 5)."
   (or (when (bound-and-true-p magnus-context--directory)
         magnus-context--directory)
       (when (fboundp 'project-current)
-        (when-let ((project (project-current)))
+        (when-let ((project (project-current 'maybe)))
           (if (fboundp 'project-root)
               (project-root project)
             (car (with-no-warnings (project-roots project))))))

@@ -80,7 +80,7 @@ Default is 1 hour."
 
 \\{magnus-context-mode-map}"
       :group 'magnus
-      (setq-local auto-save-visited-mode t)
+      (auto-save-visited-mode 1)
       (add-hook 'after-change-functions #'magnus-context--schedule-save nil t))
   ;; Fallback if markdown-mode not available
   (define-derived-mode magnus-context-mode text-mode "Magnus-Context"
@@ -101,9 +101,11 @@ Default is 1 hour."
   (secure-hash 'sha256 (expand-file-name directory)))
 
 (defun magnus-context--buffer-name (directory)
-  "Generate buffer name for DIRECTORY's context."
+  "Generate buffer name for DIRECTORY's context.
+Uses `abbreviate-file-name' to avoid collisions between projects
+that share the same basename."
   (format "*magnus-context: %s*"
-          (file-name-nondirectory (directory-file-name directory))))
+          (abbreviate-file-name (directory-file-name directory))))
 
 (defun magnus-context--context-file (directory)
   "Get the context file path for DIRECTORY."
@@ -118,21 +120,32 @@ If DIRECTORY is nil, uses the current project or default-directory."
   (let* ((dir (or directory (magnus-context--get-project-dir)))
          (buffer-name (magnus-context--buffer-name dir))
          (existing (gethash dir magnus-context--buffers)))
-    ;; Return existing buffer if alive
-    (when (and existing (buffer-live-p existing))
-      (switch-to-buffer existing)
-      (cl-return-from magnus-context existing))
-    ;; Create new buffer
-    (let ((buffer (get-buffer-create buffer-name)))
-      (with-current-buffer buffer
-        (magnus-context-mode)
-        (setq-local magnus-context--directory dir)
-        ;; Load existing content
-        (magnus-context--load dir)
-        (set-buffer-modified-p nil))
-      (puthash dir buffer magnus-context--buffers)
-      (switch-to-buffer buffer)
-      buffer)))
+    (if (and existing (buffer-live-p existing))
+        ;; Reuse existing buffer
+        (progn (switch-to-buffer existing) existing)
+      ;; Create new buffer
+      (let ((buffer (get-buffer-create buffer-name)))
+        (with-current-buffer buffer
+          (magnus-context-mode)
+          (setq-local magnus-context--directory dir)
+          (magnus-context--load dir)
+          (set-buffer-modified-p nil))
+        (puthash dir buffer magnus-context--buffers)
+        ;; Clean up hash table when the buffer is killed
+        (with-current-buffer buffer
+          (add-hook 'kill-buffer-hook #'magnus-context--cleanup-buffer nil t))
+        (switch-to-buffer buffer)
+        buffer))))
+
+(defun magnus-context--cleanup-buffer ()
+  "Remove the current buffer from the context hash tables.
+Called from `kill-buffer-hook'."
+  (when (bound-and-true-p magnus-context--directory)
+    (let ((dir magnus-context--directory))
+      (remhash dir magnus-context--buffers)
+      (when-let ((timer (gethash dir magnus-context--save-timers)))
+        (cancel-timer timer)
+        (remhash dir magnus-context--save-timers)))))
 
 (defun magnus-context--get-project-dir ()
   "Get the current project directory."

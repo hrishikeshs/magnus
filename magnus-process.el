@@ -20,6 +20,7 @@
 (require 'magnus-trace)
 
 (declare-function magnus-status-refresh "magnus-status")
+(declare-function magnus-project-root "magnus")
 
 ;; Variables defined in magnus.el
 (defvar magnus-claude-executable)
@@ -48,24 +49,9 @@ NAME is the instance name.  If nil, auto-generates one."
 (defun magnus-process--get-directory ()
   "Get directory for new instance, prompting user."
   (let ((default (or magnus-default-directory
-                     (magnus-process--project-root)
+                     (magnus-project-root)
                      default-directory)))
     (read-directory-name "Directory: " default nil t)))
-
-(defun magnus-process--project-root ()
-  "Get the current project root if available.
-Avoids triggering interactive prompts from Projectile."
-  (or
-   ;; Try projectile directly if available (non-interactive)
-   (when (and (fboundp 'projectile-project-root)
-              (bound-and-true-p projectile-mode))
-     (ignore-errors (projectile-project-root)))
-   ;; Fall back to project.el with `maybe' to avoid prompting
-   (when (fboundp 'project-current)
-     (when-let ((project (project-current 'maybe)))
-       (if (fboundp 'project-root)
-           (project-root project)
-         (car (with-no-warnings (project-roots project))))))))
 
 (defun magnus-process--spawn (instance)
   "Spawn a Claude Code process for INSTANCE."
@@ -231,11 +217,15 @@ RESOURCES is a list of (descriptor poll-timer cleanup-timer) to clean up on succ
       (magnus-process--setup-keys))
     buffer))
 
+(defun magnus-process-send-escape ()
+  "Send ESC to Claude Code (mapped from C-g)."
+  (interactive)
+  (vterm-send-key "<escape>"))
+
 (defun magnus-process--setup-keys ()
   "Set up keybindings for Claude Code in the current vterm buffer.
 Maps C-g to send ESC to Claude, since Emacs intercepts the real ESC key."
-  (local-set-key (kbd "C-g")
-                 (lambda () (interactive) (vterm-send-key "<escape>"))))
+  (local-set-key (kbd "C-g") #'magnus-process-send-escape))
 
 ;;; Trace buffer entry point
 

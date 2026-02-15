@@ -27,6 +27,7 @@
 (declare-function magnus-health-toggle "magnus-health")
 (declare-function magnus-process-create-headless "magnus-process")
 (declare-function magnus-chat "magnus-chat")
+(declare-function magnus-project-root "magnus")
 
 ;;; Main dispatch
 
@@ -93,7 +94,7 @@
 (defun magnus-transient-create-project-root ()
   "Create instance in the current project root."
   (interactive)
-  (let ((root (magnus-transient--project-root)))
+  (let ((root (magnus-project-root)))
     (if root
         (progn
           (magnus-process-create root)
@@ -112,19 +113,6 @@ or `default-directory'."
                 default-directory)))
     (magnus-process-create-headless prompt dir)
     (magnus-status-refresh)))
-
-(defun magnus-transient--project-root ()
-  "Get the current project root.
-Avoids triggering interactive prompts from Projectile."
-  (or
-   (when (and (fboundp 'projectile-project-root)
-              (bound-and-true-p projectile-mode))
-     (ignore-errors (projectile-project-root)))
-   (when (fboundp 'project-current)
-     (when-let ((project (project-current 'maybe)))
-       (if (fboundp 'project-root)
-           (project-root project)
-         (car (with-no-warnings (project-roots project))))))))
 
 ;;; Instance actions
 
