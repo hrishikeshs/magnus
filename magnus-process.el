@@ -604,7 +604,8 @@ PARTIAL is the incomplete line from previous call.  Returns new partial."
 
 (defun magnus-process--headless-handle-event (instance proc json type)
   "Handle a stream-json event of TYPE with JSON data.
-INSTANCE is the headless agent and PROC is its process."
+INSTANCE is the headless agent, PROC is its process,
+and JSON is the parsed event payload."
   (ignore instance)
   (when-let ((buf (process-buffer proc)))
     (when (buffer-live-p buf)
