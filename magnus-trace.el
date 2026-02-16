@@ -3,7 +3,7 @@
 ;; Copyright (C) 2026 Hrishikesh S
 ;; Author: Hrishikesh S <hrish2006@gmail.com>
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "28.1"))
+
 ;; URL: https://github.com/hrishikeshs/magnus
 ;; SPDX-License-Identifier: MIT
 
@@ -77,7 +77,7 @@
          (trace-name (format "*trace:%s*" name))
          (trace-buf (get-buffer-create trace-name)))
     (with-current-buffer trace-buf
-      (unless (eq major-mode 'magnus-trace-mode)
+      (unless (derived-mode-p 'magnus-trace-mode)
         (magnus-trace-mode))
       (setq magnus-trace--instance instance)
       (setq magnus-trace--last-line-count 0)
@@ -141,7 +141,7 @@
   "Append new entries from JSONL-FILE to the current trace buffer."
   (let* ((all-lines (magnus-trace--read-lines jsonl-file))
          (new-lines (nthcdr magnus-trace--last-line-count all-lines))
-         (at-end (>= (point) (point-max))))
+         (at-end (eobp)))
     (when new-lines
       (let ((inhibit-read-only t)
             (parsed-count 0))

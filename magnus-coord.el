@@ -22,6 +22,7 @@
 (require 'filenotify)
 
 (declare-function vterm-send-string "vterm")
+(declare-function project-root "project")
 (declare-function vterm-send-return "vterm")
 
 ;;; Customization
@@ -123,7 +124,7 @@ This prevents partial reads when agents write concurrently."
   "Index into the rotating reminder templates.")
 
 (defvar magnus-coord--last-contact (make-hash-table :test 'equal)
-  "Hash table: instance-id -> float-time of last user message.
+  "Hash table: instance-id -> `float-time' of last user message.
 Agents contacted recently are skipped by periodic nudges.")
 
 (defun magnus-coord-record-contact (instance-id)
@@ -688,7 +689,7 @@ Returns a plist with :active, :log, and :decisions."
       (magnus-coord--write-file-atomic file))))
 
 (defun magnus-coord-update-active (directory agent area status files)
-  "Update AGENT's entry in the Active Work table.
+  "Update AGENT's entry in the Active Work table in DIRECTORY.
 AREA is what they're working on, STATUS is their status,
 FILES is a list of files they're touching."
   (let ((file (magnus-coord-ensure-file directory))
@@ -882,9 +883,7 @@ Show at most LIMIT entries (default 5)."
         magnus-context--directory)
       (when (fboundp 'project-current)
         (when-let ((project (project-current 'maybe)))
-          (if (fboundp 'project-root)
-              (project-root project)
-            (car (with-no-warnings (project-roots project))))))
+          (project-root project)))
       (read-directory-name "Project directory: ")))
 
 (provide 'magnus-coord)

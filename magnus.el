@@ -57,6 +57,11 @@
 (declare-function magnus-coord-ensure-watchers "magnus-coord")
 (declare-function magnus-status "magnus-status")
 (declare-function magnus-process-create "magnus-process")
+(declare-function magnus-instances-list "magnus-instances")
+(declare-function magnus-instance-name "magnus-instances")
+(declare-function magnus-context-setup-hooks "magnus-context")
+(declare-function project-root "project")
+(declare-function magnus-attention-setup-hooks "magnus-attention")
 (declare-function magnus-process-create-headless "magnus-process")
 (declare-function magnus-health-start "magnus-health")
 (declare-function magnus-chat "magnus-chat")
@@ -121,9 +126,7 @@ Tries Projectile first (non-interactive), then `project.el' with
      (ignore-errors (projectile-project-root)))
    (when (fboundp 'project-current)
      (when-let ((project (project-current 'maybe)))
-       (if (fboundp 'project-root)
-           (project-root project)
-         (car (with-no-warnings (project-roots project))))))))
+       (project-root project)))))
 
 ;;; Name generation
 
@@ -198,6 +201,8 @@ Returns the name of the most recently active dormant identity, or nil."
     (magnus-persistence-load)
     (magnus-persistence--setup-autosave)
     (magnus-coord-ensure-watchers)
+    (magnus-context-setup-hooks)
+    (magnus-attention-setup-hooks)
     (magnus-attention-start)
     (magnus-coord-start-reminders)
     (magnus-health-start)

@@ -3,7 +3,7 @@
 ;; Copyright (C) 2026 Hrishikesh S
 ;; Author: Hrishikesh S <hrish2006@gmail.com>
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "28.1"))
+
 ;; URL: https://github.com/hrishikeshs/magnus
 ;; SPDX-License-Identifier: MIT
 

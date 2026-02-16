@@ -3,7 +3,7 @@
 ;; Copyright (C) 2026 Hrishikesh S
 ;; Author: Hrishikesh S <hrish2006@gmail.com>
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "28.1"))
+
 ;; URL: https://github.com/hrishikeshs/magnus
 ;; SPDX-License-Identifier: MIT
 
@@ -371,11 +371,15 @@ Sends `y' which maps to confirm:yes in all CC prompt formats."
   "Handle INSTANCE being killed."
   (magnus-attention-release instance))
 
-;; Start monitoring by default when loaded
-(add-hook 'magnus-instances-changed-hook
-          (lambda ()
-            (when (null (magnus-instances-list))
-              (magnus-attention-stop))))
+(defun magnus-attention--on-instances-empty ()
+  "Stop attention monitoring when all instances are removed."
+  (when (null (magnus-instances-list))
+    (magnus-attention-stop)))
+
+(defun magnus-attention-setup-hooks ()
+  "Set up hooks for attention monitoring."
+  (add-hook 'magnus-instances-changed-hook
+            #'magnus-attention--on-instances-empty))
 
 (provide 'magnus-attention)
 ;;; magnus-attention.el ends here

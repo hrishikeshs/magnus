@@ -3,7 +3,7 @@
 ;; Copyright (C) 2026 Hrishikesh S
 ;; Author: Hrishikesh S <hrish2006@gmail.com>
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "28.1"))
+
 ;; URL: https://github.com/hrishikeshs/magnus
 ;; SPDX-License-Identifier: MIT
 
@@ -200,8 +200,8 @@ Uses both filenotify and polling fallback for robustness."
 
 (defun magnus-process--detect-new-session (instance directory sessions-before resources)
   "Try to detect a new session for INSTANCE in DIRECTORY.
-SESSIONS-BEFORE is the pre-spawn session list.
-RESOURCES is a list of (descriptor poll-timer cleanup-timer) to clean up on success."
+SESSIONS-BEFORE is the pre-spawn session list.  RESOURCES is
+a list of (descriptor poll-timer cleanup-timer) to clean up."
   (let* ((sessions-after (magnus-process--list-sessions directory))
          (new-sessions (cl-set-difference sessions-after sessions-before :test #'string=)))
     (when new-sessions
@@ -253,13 +253,13 @@ RESOURCES is a list of (descriptor poll-timer cleanup-timer) to clean up on succ
     buffer))
 
 (defun magnus-process-send-escape ()
-  "Send ESC to Claude Code (mapped from C-g)."
+  "Send ESC to Claude Code (mapped from \\`keyboard-quit')."
   (interactive)
   (vterm-send-key "<escape>"))
 
 (defun magnus-process--setup-keys ()
   "Set up keybindings for Claude Code in the current vterm buffer.
-Maps C-g to send ESC to Claude, since Emacs intercepts the real ESC key."
+Maps \\`keyboard-quit' to send ESC, since Emacs intercepts the real ESC key."
   (local-set-key (kbd "C-g") #'magnus-process-send-escape))
 
 ;;; Trace buffer entry point
@@ -484,7 +484,7 @@ Replaces slashes, spaces, and tildes with hyphens."
   (when-let ((buffer (magnus-instance-buffer instance)))
     (when (buffer-live-p buffer)
       (with-current-buffer buffer
-        (eq major-mode 'magnus-process-headless-mode)))))
+        (derived-mode-p 'magnus-process-headless-mode)))))
 
 (defun magnus-process-create-headless (prompt &optional directory name)
   "Create a headless Claude Code instance with PROMPT.
@@ -603,7 +603,8 @@ PARTIAL is the incomplete line from previous call.  Returns new partial."
     remainder))
 
 (defun magnus-process--headless-handle-event (instance proc json type)
-  "Handle a stream-json event of TYPE for headless INSTANCE from PROC."
+  "Handle a stream-json event of TYPE with JSON data.
+INSTANCE is the headless agent and PROC is its process."
   (ignore instance)
   (when-let ((buf (process-buffer proc)))
     (when (buffer-live-p buf)

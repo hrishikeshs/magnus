@@ -3,7 +3,7 @@
 ;; Copyright (C) 2026 Hrishikesh S
 ;; Author: Hrishikesh S <hrish2006@gmail.com>
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "28.1"))
+
 ;; URL: https://github.com/hrishikeshs/magnus
 ;; SPDX-License-Identifier: MIT
 
@@ -120,7 +120,7 @@
   (interactive)
   (let ((buffer (get-buffer-create magnus-buffer-name)))
     (with-current-buffer buffer
-      (unless (eq major-mode 'magnus-status-mode)
+      (unless (derived-mode-p 'magnus-status-mode)
         (magnus-status-mode))
       (magnus-status-refresh))
     (switch-to-buffer buffer)))

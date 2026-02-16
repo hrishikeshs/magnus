@@ -3,7 +3,7 @@
 ;; Copyright (C) 2026 Hrishikesh S
 ;; Author: Hrishikesh S <hrish2006@gmail.com>
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "28.1"))
+
 ;; URL: https://github.com/hrishikeshs/magnus
 ;; SPDX-License-Identifier: MIT
 
@@ -21,6 +21,8 @@
 
 (require 'url)
 (require 'url-http)
+
+(declare-function project-root "project")
 
 ;;; Customization
 
@@ -115,7 +117,7 @@ that share the same basename."
 ;;;###autoload
 (defun magnus-context (&optional directory)
   "Open or switch to the context buffer for DIRECTORY.
-If DIRECTORY is nil, uses the current project or default-directory."
+If DIRECTORY is nil, uses the current project or `default-directory'."
   (interactive)
   (let* ((dir (or directory (magnus-context--get-project-dir)))
          (buffer-name (magnus-context--buffer-name dir))
@@ -151,9 +153,7 @@ Called from `kill-buffer-hook'."
   "Get the current project directory."
   (or (when (fboundp 'project-current)
         (when-let ((project (project-current)))
-          (if (fboundp 'project-root)
-              (project-root project)
-            (car (with-no-warnings (project-roots project))))))
+          (project-root project)))
       default-directory))
 
 ;;; Persistence
@@ -408,7 +408,9 @@ The file is placed in the project directory for easy access."
          (magnus-context-save))))
    magnus-context--buffers))
 
-(add-hook 'kill-emacs-hook #'magnus-context--save-all)
+(defun magnus-context-setup-hooks ()
+  "Set up hooks for context buffer persistence."
+  (add-hook 'kill-emacs-hook #'magnus-context--save-all))
 
 (provide 'magnus-context)
 ;;; magnus-context.el ends here

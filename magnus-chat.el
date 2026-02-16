@@ -3,7 +3,7 @@
 ;; Copyright (C) 2026 Hrishikesh S
 ;; Author: Hrishikesh S <hrish2006@gmail.com>
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "28.1"))
+
 ;; URL: https://github.com/hrishikeshs/magnus
 ;; SPDX-License-Identifier: MIT
 
@@ -15,7 +15,7 @@
 ;; with iMessage-inspired styling — outgoing messages in colored
 ;; bubbles, system events in dim centered text.
 ;;
-;; Usage: M-x magnus-chat  (or press `M' in the magnus status buffer)
+;; Usage: M-x magnus-chat  (or press M in the magnus status buffer)
 
 ;;; Code:
 
@@ -213,7 +213,7 @@ Send messages to Claude Code agents from one place.
     (setq magnus-chat--target (car agents))))
 
 (defun magnus-chat-select-agent ()
-  "Select which agent to message via completing-read."
+  "Select which agent to message via `completing-read'."
   (interactive)
   (let* ((agents (magnus-chat--running-agents))
          (names (mapcar #'magnus-instance-name agents))
