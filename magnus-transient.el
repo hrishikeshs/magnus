@@ -24,6 +24,8 @@
 (declare-function magnus-context-copy-for-agent "magnus-context")
 (declare-function magnus-coord-open "magnus-coord")
 (declare-function magnus-coord-open-instructions "magnus-coord")
+(declare-function magnus-attention-next "magnus-attention")
+(declare-function magnus-attention-show-queue "magnus-attention")
 (declare-function magnus-health-toggle "magnus-health")
 (declare-function magnus-process-create-headless "magnus-process")
 (declare-function magnus-chat "magnus-chat")
