@@ -21,6 +21,8 @@
 (require 'magnus-health)
 
 (declare-function magnus-dispatch "magnus-transient")
+(declare-function magnus-coord-agent-sleeping-p "magnus-coord")
+(declare-function magnus-coord-agent-busy-p "magnus-coord")
 (declare-function magnus-context "magnus-context")
 (declare-function magnus-chat "magnus-chat")
 
@@ -73,6 +75,11 @@
 (defface magnus-status-errored
   '((t :inherit error :slant italic))
   "Face for errored status (headless failed)."
+  :group 'magnus)
+
+(defface magnus-status-sleeping
+  '((t :inherit font-lock-comment-face :slant italic))
+  "Face for sleeping agent indicator."
   :group 'magnus)
 
 ;;; Mode definition
@@ -207,6 +214,12 @@
     (insert (propertize name 'face 'magnus-status-instance-name))
     (insert " ")
     (insert (propertize (format "[%s]" status-str) 'face status-face))
+    (when (magnus-coord-agent-sleeping-p instance)
+      (insert " ")
+      (insert (propertize "zzz" 'face 'magnus-status-sleeping)))
+    (when (magnus-coord-agent-busy-p instance)
+      (insert " ")
+      (insert (propertize "busy" 'face 'font-lock-warning-face)))
     (insert " ")
     (insert health-ind)
     (insert " ")

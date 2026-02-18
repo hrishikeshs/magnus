@@ -100,6 +100,13 @@ Path is <directory>/.claude/agents/<name>/memory.md."
    (format ".claude/agents/%s/memory.md" (magnus-instance-name instance))
    (magnus-instance-directory instance)))
 
+(defun magnus-process--agent-busy-path (instance)
+  "Return the busy signal file path for INSTANCE.
+Path is <directory>/.claude/agents/<name>/busy."
+  (expand-file-name
+   (format ".claude/agents/%s/busy" (magnus-instance-name instance))
+   (magnus-instance-directory instance)))
+
 (defun magnus-process--ensure-agent-dir (instance)
   "Ensure the agent directory exists for INSTANCE."
   (let ((dir (file-name-directory (magnus-process--agent-memory-path instance))))
@@ -146,9 +153,11 @@ While working:
 - If you learn something non-obvious, add it to the Discoveries section — other agents will read it.
 - If you need another agent's attention, @mention them in the Log — they get notified automatically.
 - Check .magnus-coord.md periodically for messages and discoveries.
+- If you need uninterrupted focus, create .claude/agents/%s/busy — Magnus will stop nudging you. Delete it when you're done.
 
 Please start with step 1 now."
              (if has-memory " back" "")
+             name
              name))))
 
 (defun magnus-process--list-sessions (directory)

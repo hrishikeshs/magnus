@@ -99,6 +99,13 @@ Set to nil to disable auto-approval."
   :type 'boolean
   :group 'magnus)
 
+(defcustom magnus-attention-focus-delay 1.5
+  "Seconds to wait before switching focus to an attention-requesting agent.
+A short delay prevents jittery buffer switching when multiple agents
+need attention in rapid succession.  Set to 0 to disable."
+  :type 'number
+  :group 'magnus)
+
 ;;; Attention queue
 
 (defvar magnus-attention-queue nil
@@ -116,6 +123,9 @@ First element is the instance currently having the floor.")
 
 (defvar magnus-attention--checking nil
   "Non-nil if currently checking instances (prevents re-entry).")
+
+(defvar magnus-attention--focus-timer nil
+  "Pending timer for debounced focus switch.")
 
 (defvar magnus-attention-return-buffer nil
   "Buffer to return to when the attention queue empties.
@@ -173,7 +183,23 @@ When the queue is empty and a return buffer is set, switch back to it."
         (switch-to-buffer buf)))))
 
 (defun magnus-attention--focus (instance)
-  "Focus INSTANCE's buffer."
+  "Focus INSTANCE's buffer, debounced by `magnus-attention-focus-delay'.
+Cancels any pending focus switch and schedules a new one."
+  (when magnus-attention--focus-timer
+    (cancel-timer magnus-attention--focus-timer)
+    (setq magnus-attention--focus-timer nil))
+  (if (or (zerop magnus-attention-focus-delay)
+          (null magnus-attention-focus-delay))
+      (magnus-attention--focus-immediate instance)
+    (setq magnus-attention--focus-timer
+          (run-with-timer
+           magnus-attention-focus-delay nil
+           (lambda ()
+             (setq magnus-attention--focus-timer nil)
+             (magnus-attention--focus-immediate instance))))))
+
+(defun magnus-attention--focus-immediate (instance)
+  "Immediately focus INSTANCE's buffer."
   (when-let ((buffer (magnus-instance-buffer instance)))
     (when (buffer-live-p buffer)
       (let ((window (get-buffer-window buffer)))
@@ -336,6 +362,9 @@ Sends `y' which maps to confirm:yes in all CC prompt formats."
   (when magnus-attention--timer
     (cancel-timer magnus-attention--timer)
     (setq magnus-attention--timer nil))
+  (when magnus-attention--focus-timer
+    (cancel-timer magnus-attention--focus-timer)
+    (setq magnus-attention--focus-timer nil))
   (message "Magnus attention monitoring stopped"))
 
 (defun magnus-attention-toggle ()
