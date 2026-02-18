@@ -76,6 +76,21 @@ user returns, a wake-up message is sent.  Set to nil to disable."
                  (const :tag "Disabled" nil))
   :group 'magnus)
 
+(defcustom magnus-coord-context-warn-threshold 0.80
+  "Context utilization ratio at which to warn an agent.
+When an agent's context usage exceeds this fraction of the
+maximum window, a memory consolidation warning is sent.
+Set to nil to disable.  Default is 0.80 (80%)."
+  :type '(choice (float :tag "Ratio (0.0-1.0)")
+                 (const :tag "Disabled" nil))
+  :group 'magnus)
+
+(defcustom magnus-coord-context-max-tokens 200000
+  "Maximum context window size in tokens.
+Used to calculate context utilization percentage."
+  :type 'integer
+  :group 'magnus)
+
 ;;; Atomic file writes
 
 (defun magnus-coord--write-file-atomic (file)
@@ -227,7 +242,9 @@ Suppressed entirely when the user is AFK or actively chatting."
       (setq magnus-coord--reminder-index
             (1+ magnus-coord--reminder-index))))
   ;; Trim logs while we're at it (even when idle)
-  (magnus-coord-trim-all))
+  (magnus-coord-trim-all)
+  ;; Check context utilization (runs even when idle/active)
+  (magnus-coord-check-context-all))
 
 ;;; Log trimming
 
@@ -306,6 +323,7 @@ Keeps only the last `magnus-coord-log-max-entries' entries."
 (declare-function magnus-process--agent-memory-path "magnus-process")
 (declare-function magnus-process--agent-busy-path "magnus-process")
 (declare-function magnus-process--ensure-agent-dir "magnus-process")
+(declare-function magnus-process--session-jsonl-path "magnus-process")
 
 (defun magnus-coord--on-user-idle ()
   "Called when the user has been idle for `magnus-coord-idle-threshold'.
@@ -336,6 +354,82 @@ sleep) and re-arms the idle timer."
        "The user is back! Resume normal operation — check .magnus-coord.md for any updates.")))
   ;; Re-arm the idle timer for the next AFK period
   (magnus-coord--start-idle-watch))
+
+;;; Context window monitoring
+
+(defvar magnus-coord--context-warned (make-hash-table :test 'equal)
+  "Hash table of instance-id to t for agents already warned about context.
+Cleared when the agent's session changes (restart or compaction).")
+
+(defun magnus-coord-check-context-all ()
+  "Check context utilization for all running agents.
+Warns agents approaching the context window limit."
+  (when magnus-coord-context-warn-threshold
+    (dolist (instance (magnus-instances-list))
+      (when (eq (magnus-instance-status instance) 'running)
+        (condition-case nil
+            (magnus-coord--check-context-one instance)
+          (error nil))))))
+
+(defun magnus-coord--check-context-one (instance)
+  "Check context utilization for INSTANCE and warn if needed."
+  (let ((id (magnus-instance-id instance)))
+    (unless (gethash id magnus-coord--context-warned)
+      (when-let ((usage (magnus-coord--read-context-usage instance)))
+        (let ((ratio (/ (float usage) magnus-coord-context-max-tokens)))
+          (when (>= ratio magnus-coord-context-warn-threshold)
+            (puthash id t magnus-coord--context-warned)
+            (let* ((name (magnus-instance-name instance))
+                   (pct (round (* ratio 100)))
+                   (memory-rel (format ".claude/agents/%s/memory.md" name)))
+              (magnus-process--ensure-agent-dir instance)
+              (magnus-coord-nudge-agent
+               instance
+               (format "Heads up: you're at %d%% context. Compaction is coming — write everything important to your memory file at %s NOW, while you still have full context. Key decisions, unfinished work, what you've learned, relationships with other agents. After compaction you'll lose detail."
+                       pct memory-rel)))))))))
+
+(defun magnus-coord--read-context-usage (instance)
+  "Read the latest context token count from INSTANCE's session trace.
+Returns total input tokens or nil if unavailable.  Only reads the
+last 4KB of the file for efficiency."
+  (when-let ((session-id (magnus-instance-session-id instance))
+             (jsonl (magnus-process--session-jsonl-path
+                     (magnus-instance-directory instance) session-id)))
+    (let* ((attrs (file-attributes jsonl))
+           (size (file-attribute-size attrs))
+           (start (max 0 (- size 4096))))
+      (with-temp-buffer
+        (insert-file-contents jsonl nil start size)
+        (magnus-coord--parse-last-usage)))))
+
+(defun magnus-coord--parse-last-usage ()
+  "Parse the last usage entry from the current buffer.
+Looks for cache_read_input_tokens in the last complete JSON lines
+and sums input_tokens + cache_creation_input_tokens +
+cache_read_input_tokens."
+  (goto-char (point-max))
+  (let ((found nil))
+    (while (and (not found)
+                (re-search-backward "cache_read_input_tokens" nil t))
+      (let ((line-start (line-beginning-position))
+            (line-end (line-end-position)))
+        ;; Extract the three token counts via regex (avoid full JSON parse)
+        (let ((input (magnus-coord--extract-number
+                      "\"input_tokens\":\\s*\\([0-9]+\\)" line-start line-end))
+              (cache-create (magnus-coord--extract-number
+                             "\"cache_creation_input_tokens\":\\s*\\([0-9]+\\)" line-start line-end))
+              (cache-read (magnus-coord--extract-number
+                           "\"cache_read_input_tokens\":\\s*\\([0-9]+\\)" line-start line-end)))
+          (when (and input cache-read)
+            (setq found (+ input (or cache-create 0) cache-read))))))
+    found))
+
+(defun magnus-coord--extract-number (pattern start end)
+  "Extract a number matching PATTERN between START and END."
+  (save-excursion
+    (goto-char start)
+    (when (re-search-forward pattern end t)
+      (string-to-number (match-string 1)))))
 
 ;;; @mention watching
 
