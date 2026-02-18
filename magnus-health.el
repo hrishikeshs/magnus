@@ -19,6 +19,8 @@
 
 (declare-function magnus-process-running-p "magnus-process")
 
+(defvar magnus-claude-executable)
+
 ;;; Customization
 
 (defcustom magnus-health-check-interval 30
@@ -292,6 +294,78 @@ Returns one of: ok, stale, stuck, dead, or nil if unknown."
     "Keep calm and M-x doctor.")
   "Rotating dashboard status messages.")
 
+;;; AI-powered fortune generation
+
+(defvar magnus-health-dashboard--gen-prompt
+  "You are the fortune cookie writer for a Bloomberg-style terminal ticker \
+running inside Emacs. Generate 20 fresh, witty one-liner messages. Mix these \
+vibes: sardonic programming wisdom, Emacs culture, AI agent humor, riffs on \
+famous quotes, editor wars, debugging gallows humor, open source philosophy. \
+Think: fortune cookies written by a sarcastic Lisp hacker who manages AI \
+coding agents. One message per line. No numbering. No quotes. No bullet \
+points. Under 100 characters each. Be fresh and topical."
+  "Prompt sent to Claude to generate fresh dashboard messages.")
+
+(defvar magnus-health-dashboard--msg-queue nil
+  "Queue of AI-generated messages waiting to be displayed.")
+
+(defvar magnus-health-dashboard--generating nil
+  "Non-nil while a generation process is running.")
+
+(defvar magnus-health-dashboard--gen-output ""
+  "Accumulated stdout from the generator process.")
+
+(defun magnus-health-dashboard--generate-messages ()
+  "Fire a lightweight Claude process to generate fresh dashboard messages.
+Uses `--print' mode with no tools — just text generation.
+Falls back silently to the static list if generation fails."
+  (when (and (not magnus-health-dashboard--generating)
+             (bound-and-true-p magnus-claude-executable)
+             (executable-find magnus-claude-executable))
+    (setq magnus-health-dashboard--generating t
+          magnus-health-dashboard--gen-output "")
+    (make-process
+     :name "magnus-bloomberg-gen"
+     :command (list magnus-claude-executable
+                   "--print" magnus-health-dashboard--gen-prompt)
+     :connection-type 'pipe
+     :filter (lambda (_proc output)
+               (setq magnus-health-dashboard--gen-output
+                     (concat magnus-health-dashboard--gen-output output)))
+     :sentinel (lambda (_proc event)
+                 (when (string-prefix-p "finished" (string-trim event))
+                   (magnus-health-dashboard--parse-gen-output))
+                 (setq magnus-health-dashboard--generating nil)))))
+
+(defun magnus-health-dashboard--parse-gen-output ()
+  "Parse generator output into individual messages and add to queue."
+  (let* ((lines (split-string magnus-health-dashboard--gen-output "\n" t))
+         (msgs (cl-remove-if
+                (lambda (line)
+                  (let ((trimmed (string-trim line)))
+                    (or (string-empty-p trimmed)
+                        (< (length trimmed) 15)
+                        (> (length trimmed) 120)
+                        (string-match-p "\\`[0-9]+[.):]" trimmed))))
+                lines)))
+    (setq msgs (mapcar #'string-trim msgs))
+    ;; Strip leading "- " or "* " from markdown lists
+    (setq msgs (mapcar (lambda (m)
+                         (if (string-match "\\`[-*] " m)
+                             (substring m 2)
+                           m))
+                       msgs))
+    (when msgs
+      (setq magnus-health-dashboard--msg-queue
+            (append magnus-health-dashboard--msg-queue msgs)))))
+
+(defun magnus-health-dashboard--next-msg ()
+  "Return the next message, preferring AI-generated over static."
+  (if magnus-health-dashboard--msg-queue
+      (pop magnus-health-dashboard--msg-queue)
+    (nth (random (length magnus-health-dashboard--messages))
+         magnus-health-dashboard--messages)))
+
 (defvar magnus-health-dashboard--timer nil "Dashboard refresh timer.")
 (defvar magnus-health-dashboard--scroll 0 "Dashboard scroll position.")
 (defvar magnus-health-dashboard--prices nil "Current data points.")
@@ -419,8 +493,10 @@ Returns one of: ok, stale, stuck, dead, or nil if unknown."
   (when (>= magnus-health-dashboard--msg-countdown 60)
     (setq magnus-health-dashboard--msg-countdown 0)
     (setq magnus-health-dashboard--current-msg
-          (nth (random (length magnus-health-dashboard--messages))
-               magnus-health-dashboard--messages)))
+          (magnus-health-dashboard--next-msg))
+    ;; Refill when queue runs low
+    (when (< (length magnus-health-dashboard--msg-queue) 5)
+      (magnus-health-dashboard--generate-messages)))
   (magnus-health-dashboard--render))
 
 ;;;###autoload
@@ -455,6 +531,8 @@ Returns one of: ok, stale, stuck, dead, or nil if unknown."
       (set-window-parameter win 'no-other-window t)))
   (setq magnus-health-dashboard--timer
         (run-with-timer 0 0.5 #'magnus-health-dashboard--update))
+  ;; Pre-generate fresh messages
+  (magnus-health-dashboard--generate-messages)
   (message "MAGNUS TERMINAL ONLINE"))
 
 (defun magnus-health-dashboard--stop ()
@@ -462,6 +540,12 @@ Returns one of: ok, stale, stuck, dead, or nil if unknown."
   (when magnus-health-dashboard--timer
     (cancel-timer magnus-health-dashboard--timer)
     (setq magnus-health-dashboard--timer nil))
+  ;; Kill any running generator process
+  (when-let ((proc (get-process "magnus-bloomberg-gen")))
+    (when (process-live-p proc)
+      (delete-process proc)))
+  (setq magnus-health-dashboard--generating nil
+        magnus-health-dashboard--msg-queue nil)
   (when-let ((buf (get-buffer magnus-health-dashboard--buffer)))
     (when-let ((win (get-buffer-window buf)))
       (delete-window win))
