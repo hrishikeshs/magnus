@@ -495,12 +495,16 @@ Replaces slashes, spaces, and tildes with hyphens."
       (with-current-buffer buffer
         (derived-mode-p 'magnus-process-headless-mode)))))
 
+(defvar magnus--creation-task)
+
 (defun magnus-process-create-headless (prompt &optional directory name)
   "Create a headless Claude Code instance with PROMPT.
 DIRECTORY is the working directory.  NAME is optional.
+Binds the prompt as `magnus--creation-task' for smart resurrection.
 Returns the new instance."
   (interactive "sTask prompt: ")
   (let* ((dir (or directory (magnus-process--get-directory)))
+         (magnus--creation-task prompt)
          (instance-name (or name
                             (concat "headless-"
                                     (funcall magnus-instance-name-generator dir))))

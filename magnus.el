@@ -130,6 +130,10 @@ Tries Projectile first (non-interactive), then `project.el' with
 
 ;;; Name generation
 
+(defvar magnus--creation-task nil
+  "Task description for current agent creation.
+Temporarily bound during name generation for smart resurrection.")
+
 (defvar magnus--name-adjectives
   '("swift" "bright" "calm" "bold" "keen"
     "wise" "quick" "sharp" "cool" "warm")
@@ -142,11 +146,13 @@ Tries Projectile first (non-interactive), then `project.el' with
 
 (defun magnus-generate-instance-name (directory)
   "Generate an instance name, preferring dormant identities.
-Scans DIRECTORY for agents with memory files from previous sessions.
-If a dormant identity exists (not currently in use), resurrects the
-most recently active one.  Otherwise generates a fresh random name."
+When `magnus--creation-task' is set, uses AI to match the task
+against dormant agent memories for smart resurrection.  Falls back
+to most-recent resurrection, then random name generation."
   (let ((existing (mapcar #'magnus-instance-name (magnus-instances-list))))
-    (or (magnus--resurrect-dormant-identity directory existing)
+    (or (when magnus--creation-task
+          (magnus--smart-resurrect directory existing magnus--creation-task))
+        (magnus--resurrect-dormant-identity directory existing)
         (magnus--generate-random-name existing))))
 
 (defun magnus--resurrect-dormant-identity (directory existing-names)
@@ -182,6 +188,84 @@ Returns the name of the most recently active dormant identity, or nil."
                               magnus--name-nouns)))
       (setq attempts (1+ attempts)))
     name))
+
+;;; Smart resurrection
+
+(defun magnus--smart-resurrect (directory existing task)
+  "Match dormant agents in DIRECTORY to TASK description.
+EXISTING is the list of names currently in use.
+Uses a synchronous `claude --print' call to find the best match.
+Returns the chosen name, or nil if no match or user declines."
+  (let ((candidates (magnus--dormant-candidates directory existing)))
+    (when candidates
+      (message "Matching task to dormant agents...")
+      (when-let ((output (magnus--run-match-sync
+                          (magnus--build-match-prompt candidates task))))
+        (when-let ((match (magnus--parse-match-output output candidates)))
+          (let ((name (car match))
+                (reason (cdr match)))
+            (when (y-or-n-p (format "Resurrect %s? (%s) " name reason))
+              name)))))))
+
+(defun magnus--dormant-candidates (directory existing)
+  "Return dormant agent candidates in DIRECTORY.
+EXISTING is the list of names to exclude.
+Returns an alist of (NAME . MEMORY-SUMMARY) pairs."
+  (let* ((agents-dir (expand-file-name ".claude/agents/" directory))
+         (candidates nil))
+    (when (file-directory-p agents-dir)
+      (dolist (entry (directory-files agents-dir nil "\\`[^.]"))
+        (let ((memory (expand-file-name (concat entry "/memory.md") agents-dir)))
+          (when (and (file-exists-p memory)
+                     (not (member entry existing)))
+            (push (cons entry (magnus--read-memory-summary memory))
+                  candidates)))))
+    (nreverse candidates)))
+
+(defun magnus--read-memory-summary (file)
+  "Read the first 500 characters of memory FILE as a summary."
+  (with-temp-buffer
+    (insert-file-contents file nil 0 500)
+    (buffer-string)))
+
+(defun magnus--build-match-prompt (candidates task)
+  "Build a prompt to match CANDIDATES against TASK.
+CANDIDATES is an alist of (NAME . MEMORY-SUMMARY)."
+  (let ((memories (mapconcat
+                   (lambda (c)
+                     (format "--- %s ---\n%s" (car c) (cdr c)))
+                   candidates "\n\n")))
+    (format "Dormant agents with experience on this project:\n\n\
+%s\n\n\
+New task: %s\n\n\
+Which agent's experience is most relevant to this task?\n\
+Reply with ONLY: agent-name|brief-reason (5 words max)\n\
+Or reply: none|no match"
+            memories task)))
+
+(defun magnus--run-match-sync (prompt)
+  "Run `claude --print' synchronously with PROMPT.
+Returns the trimmed output string, or nil on error."
+  (condition-case nil
+      (when (and (bound-and-true-p magnus-claude-executable)
+                 (executable-find magnus-claude-executable))
+        (with-temp-buffer
+          (call-process magnus-claude-executable nil t nil "--print" prompt)
+          (string-trim (buffer-string))))
+    (error nil)))
+
+(defun magnus--parse-match-output (output candidates)
+  "Parse OUTPUT from a smart match call.
+CANDIDATES is the alist used in the prompt.
+Returns (NAME . REASON) if a valid match was found, or nil."
+  (when (and output (not (string-empty-p output)))
+    (let* ((line (car (split-string output "\n" t)))
+           (parts (split-string line "|"))
+           (name (string-trim (car parts)))
+           (reason (if (cdr parts) (string-trim (cadr parts)) "relevant experience")))
+      (when (and (not (string-prefix-p "none" (downcase name)))
+                 (assoc name candidates))
+        (cons name reason)))))
 
 ;;; Core functionality
 

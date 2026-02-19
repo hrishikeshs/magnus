@@ -883,31 +883,11 @@ FILES is a list of files they're touching."
   "Remove AGENT from the Active Work table in DIRECTORY."
   (magnus-coord-update-active directory agent "" "done" ""))
 
-(defun magnus-coord-clear-session (directory)
-  "Clear session-specific sections from DIRECTORY's coordination file.
-Removes content from Discoveries and Decisions sections, keeping the
-headers intact.  Called when the last agent leaves a project."
-  (let ((file (magnus-coord-file-path directory)))
-    (when (file-exists-p file)
-      (with-temp-buffer
-        (insert-file-contents file)
-        (let ((modified nil))
-          (dolist (section '("Discoveries" "Decisions"))
-            (goto-char (point-min))
-            (when (re-search-forward
-                   (format "^## %s\n+" section) nil t)
-              (let ((content-start (point))
-                    (section-end (save-excursion
-                                  (if (re-search-forward "^## " nil t)
-                                      (match-beginning 0)
-                                    (point-max)))))
-                ;; Only clear if there's actual content (not just comments)
-                (when (< content-start section-end)
-                  (delete-region content-start section-end)
-                  (insert "\n")
-                  (setq modified t)))))
-          (when modified
-            (magnus-coord--write-file-atomic file)))))))
+(defun magnus-coord-mark-session-end (directory)
+  "Mark the end of a session in DIRECTORY's coordination file.
+Appends a log entry instead of clearing sections, preserving
+Discoveries and Decisions for future agents."
+  (magnus-coord-add-log directory "Magnus" "Session ended"))
 
 (defun magnus-coord-reconcile (directory)
   "Reconcile the Active Work table in DIRECTORY with live instances.
@@ -970,7 +950,7 @@ with stale statuses like done, died, finished, completed, stopped."
                       (magnus-instances-list))))
       (when (zerop remaining)
         (magnus-coord-stop-watching directory)
-        (magnus-coord-clear-session directory)))))
+        (magnus-coord-mark-session-end directory)))))
 
 ;;; Display
 

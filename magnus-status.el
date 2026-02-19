@@ -356,17 +356,23 @@
       (magnus-process-switch-to instance)
     (user-error "No instance at point")))
 
+(defvar magnus--creation-task)
+
 (defun magnus-status-create ()
   "Create a new Claude Code instance.
+Prompts for a task description to enable smart resurrection of
+dormant agents with relevant expertise.  Press RET to skip.
 Uses the directory of the instance at point, or the first instance's
 directory, or `magnus-default-directory', or `default-directory'."
   (interactive)
-  (let ((dir (or (when-let ((inst (magnus-status--get-instance-at-point)))
-                   (magnus-instance-directory inst))
-                 (when-let ((inst (car (magnus-instances-list))))
-                   (magnus-instance-directory inst))
-                 magnus-default-directory
-                 default-directory)))
+  (let* ((dir (or (when-let ((inst (magnus-status--get-instance-at-point)))
+                    (magnus-instance-directory inst))
+                  (when-let ((inst (car (magnus-instances-list))))
+                    (magnus-instance-directory inst))
+                  magnus-default-directory
+                  default-directory))
+         (task (read-string "What will this agent work on? (RET to skip): "))
+         (magnus--creation-task (unless (string-empty-p task) task)))
     (magnus-process-create dir)
     (magnus-status-refresh)))
 
