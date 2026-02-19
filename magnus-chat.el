@@ -408,15 +408,19 @@ Delays the Return keystroke so the TUI can process the pasted text."
 ;;; Typing interleave protection
 
 (defun magnus-chat-active-target-id ()
-  "Return the target instance ID if the user is composing in chat.
-Returns nil if the chat buffer does not exist, has no target, or
-the input area is empty."
+  "Return the target instance ID if the user is in an active chat.
+Returns the target ID when the chat buffer is visible in any window,
+protecting that agent from nudges for the duration of the conversation.
+Also returns the ID when the input area has unsent text."
   (when-let ((buf (get-buffer magnus-chat-buffer-name)))
-    (with-current-buffer buf
-      (when (and magnus-chat--target
-                magnus-chat--input-marker
-                (> (point-max) (marker-position magnus-chat--input-marker)))
-        (magnus-instance-id magnus-chat--target)))))
+    (when (buffer-live-p buf)
+      (with-current-buffer buf
+        (when (and magnus-chat--target
+                  (or (get-buffer-window buf)
+                      (and magnus-chat--input-marker
+                           (> (point-max)
+                              (marker-position magnus-chat--input-marker)))))
+          (magnus-instance-id magnus-chat--target))))))
 
 ;;; Entry point
 

@@ -466,11 +466,14 @@ Falls back silently to the static list if generation fails."
     (concat label pad time pad status)))
 
 (defun magnus-health-dashboard--render ()
-  "Render the full dashboard display."
+  "Render the full dashboard display.
+Suppresses redisplay during the erase+insert cycle to prevent
+the side window from flickering or resizing."
   (when-let ((buf (get-buffer magnus-health-dashboard--buffer)))
     (when (buffer-live-p buf)
       (with-current-buffer buf
         (let ((inhibit-read-only t)
+              (inhibit-redisplay t)
               (win (get-buffer-window buf)))
           (erase-buffer)
           (insert (magnus-health-dashboard--render-header))
@@ -528,7 +531,8 @@ Falls back silently to the static list if generation fails."
                       (preserve-size . (nil . t))))
     (when-let ((win (get-buffer-window buf)))
       (set-window-dedicated-p win t)
-      (set-window-parameter win 'no-other-window t)))
+      (set-window-parameter win 'no-other-window t)
+      (window-preserve-size win nil t)))
   (setq magnus-health-dashboard--timer
         (run-with-timer 0 0.5 #'magnus-health-dashboard--update))
   ;; Pre-generate fresh messages
