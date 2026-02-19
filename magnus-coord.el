@@ -168,10 +168,9 @@ Set by `magnus-coord--on-user-idle', cleared by `magnus-coord--on-user-return'."
   "Float-time until which the user is considered actively chatting.
 Nudges are suppressed while `float-time' is less than this value.")
 
-(defvar magnus-coord--sleeping-agents (make-hash-table :test 'equal)
-  "Hash table of instance-id to t for agents in selective sleep.
-Distinct from AFK sleep which affects all agents.  Sleeping agents
-do not receive periodic nudges.")
+(defvar magnus-coord--do-not-disturb nil
+  "Non-nil when do-not-disturb mode is active.
+All periodic nudges are suppressed.  Toggle with `magnus-coord-toggle-dnd'.")
 
 (defun magnus-coord-record-user-active ()
   "Record that the user is actively chatting.
@@ -183,33 +182,15 @@ Suppresses all nudges for `magnus-coord-active-cooldown' seconds."
   "Return non-nil if the user has been actively chatting recently."
   (> magnus-coord--user-active-until (float-time)))
 
-(defun magnus-coord-sleep-agent (instance)
-  "Put INSTANCE into selective sleep.
-Sends a memory consolidation message and marks the agent as sleeping.
-Sleeping agents do not receive periodic nudges."
-  (let* ((id (magnus-instance-id instance))
-         (name (magnus-instance-name instance))
-         (memory-rel (format ".claude/agents/%s/memory.md" name)))
-    (puthash id t magnus-coord--sleeping-agents)
-    (magnus-process--ensure-agent-dir instance)
-    (magnus-coord-nudge-agent
-     instance
-     (format "The user has asked you to sleep. Before sleeping, update your memory file at %s — write what matters from this session. Then go quiet and wait until you're woken up."
-             memory-rel))
-    (run-hooks 'magnus-instances-changed-hook)))
-
-(defun magnus-coord-wake-agent (instance)
-  "Wake INSTANCE from selective sleep."
-  (let ((id (magnus-instance-id instance)))
-    (remhash id magnus-coord--sleeping-agents)
-    (magnus-coord-nudge-agent
-     instance
-     "You've been woken up! The user needs you active again. Check .magnus-coord.md for any updates and resume work.")
-    (run-hooks 'magnus-instances-changed-hook)))
-
-(defun magnus-coord-agent-sleeping-p (instance)
-  "Return non-nil if INSTANCE is in selective sleep."
-  (gethash (magnus-instance-id instance) magnus-coord--sleeping-agents))
+(defun magnus-coord-toggle-dnd ()
+  "Toggle do-not-disturb mode.
+When active, all periodic coordination nudges are suppressed.
+Agents keep working but are not poked."
+  (interactive)
+  (setq magnus-coord--do-not-disturb (not magnus-coord--do-not-disturb))
+  (message "Magnus: Do Not Disturb %s"
+           (if magnus-coord--do-not-disturb "ON" "OFF"))
+  (run-hooks 'magnus-instances-changed-hook))
 
 (defun magnus-coord-agent-busy-p (instance)
   "Return non-nil if INSTANCE has signaled it is busy.
@@ -220,11 +201,12 @@ Agents create a busy file to tell Magnus to stop nudging them."
 
 (defun magnus-coord--send-reminders ()
   "Send a coordination reminder to idle instances.
-Skips agents that were recently contacted, are sleeping, or are
-the current chat target while the user is typing.
-Suppressed entirely when the user is AFK or actively chatting."
+Skips agents that were recently contacted, are busy, or are the
+current chat target while the user is typing.
+Suppressed entirely when AFK, actively chatting, or DND is on."
   (unless (or magnus-coord--user-idle-p
-              (magnus-coord--user-active-p))
+              (magnus-coord--user-active-p)
+              magnus-coord--do-not-disturb)
     (let ((template (nth (mod magnus-coord--reminder-index
                               (length magnus-coord--reminder-templates))
                          magnus-coord--reminder-templates))
@@ -233,7 +215,6 @@ Suppressed entirely when the user is AFK or actively chatting."
       (dolist (instance (magnus-instances-list))
         (when (and (eq (magnus-instance-status instance) 'running)
                    (not (magnus-coord--recently-contacted-p instance))
-                   (not (magnus-coord-agent-sleeping-p instance))
                    (not (magnus-coord-agent-busy-p instance))
                    (not (equal (magnus-instance-id instance) chat-target)))
           (magnus-coord-nudge-agent
@@ -342,13 +323,11 @@ Tells agents to consolidate their memory and go to sleep."
 
 (defun magnus-coord--on-user-return ()
   "Called when the user presses a key after being idle.
-Sends a wake-up message to running agents (except those in selective
-sleep) and re-arms the idle timer."
+Sends a wake-up message to running agents and re-arms the idle timer."
   (remove-hook 'pre-command-hook #'magnus-coord--on-user-return)
   (setq magnus-coord--user-idle-p nil)
   (dolist (instance (magnus-instances-list))
-    (when (and (eq (magnus-instance-status instance) 'running)
-               (not (magnus-coord-agent-sleeping-p instance)))
+    (when (eq (magnus-instance-status instance) 'running)
       (magnus-coord-nudge-agent
        instance
        "The user is back! Resume normal operation — check .magnus-coord.md for any updates.")))
@@ -981,7 +960,6 @@ with stale statuses like done, died, finished, completed, stopped."
 (defun magnus-coord-unregister-agent (directory instance)
   "Unregister INSTANCE from DIRECTORY's coordination file."
   (let ((name (magnus-instance-name instance)))
-    (remhash (magnus-instance-id instance) magnus-coord--sleeping-agents)
     (magnus-coord-clear-agent directory name)
     (magnus-coord-add-log directory name "Left the session")
     ;; If no agents remain, clean up for next session

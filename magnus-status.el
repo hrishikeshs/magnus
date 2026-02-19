@@ -21,8 +21,9 @@
 (require 'magnus-health)
 
 (declare-function magnus-dispatch "magnus-transient")
-(declare-function magnus-coord-agent-sleeping-p "magnus-coord")
 (declare-function magnus-coord-agent-busy-p "magnus-coord")
+
+(defvar magnus-coord--do-not-disturb)
 (declare-function magnus-context "magnus-context")
 (declare-function magnus-chat "magnus-chat")
 
@@ -77,11 +78,6 @@
   "Face for errored status (headless failed)."
   :group 'magnus)
 
-(defface magnus-status-sleeping
-  '((t :inherit font-lock-comment-face :slant italic))
-  "Face for sleeping agent indicator."
-  :group 'magnus)
-
 ;;; Mode definition
 
 (defvar magnus-status-mode-map
@@ -106,6 +102,7 @@
     (define-key map (kbd "a") #'magnus-attention-next)
     (define-key map (kbd "A") #'magnus-attention-show-queue)
     (define-key map (kbd "P") #'magnus-status-purge)
+    (define-key map (kbd "z") #'magnus-coord-toggle-dnd)
     (define-key map (kbd "?") #'magnus-dispatch)
     (define-key map (kbd "q") #'quit-window)
     map)
@@ -167,6 +164,8 @@
   (insert (propertize "Magnus" 'face 'magnus-status-section-heading))
   (insert " - Claude Code Instance Manager\n")
   (insert (format "Instances: %d" (magnus-instances-count)))
+  (when magnus-coord--do-not-disturb
+    (insert (propertize "  [DND]" 'face 'font-lock-warning-face)))
   (let ((attention-count (magnus-attention-pending-count)))
     (when (> attention-count 0)
       (insert (propertize (format "  [%d need attention]" attention-count)
@@ -214,9 +213,6 @@
     (insert (propertize name 'face 'magnus-status-instance-name))
     (insert " ")
     (insert (propertize (format "[%s]" status-str) 'face status-face))
-    (when (magnus-coord-agent-sleeping-p instance)
-      (insert " ")
-      (insert (propertize "zzz" 'face 'magnus-status-sleeping)))
     (when (magnus-coord-agent-busy-p instance)
       (insert " ")
       (insert (propertize "busy" 'face 'font-lock-warning-face)))

@@ -26,6 +26,7 @@
 (declare-function magnus-coord-open-instructions "magnus-coord")
 (declare-function magnus-attention-next "magnus-attention")
 (declare-function magnus-attention-show-queue "magnus-attention")
+(declare-function magnus-coord-toggle-dnd "magnus-coord")
 (declare-function magnus-health-toggle "magnus-health")
 (declare-function magnus-process-create-headless "magnus-process")
 (declare-function magnus-chat "magnus-chat")
@@ -59,7 +60,8 @@
    ("a" "Next in attention queue" magnus-attention-next)
    ("A" "Show attention queue" magnus-attention-show-queue)
    ("T" "Toggle attention monitoring" magnus-attention-toggle)
-   ("H" "Toggle health monitoring" magnus-health-toggle)]
+   ("H" "Toggle health monitoring" magnus-health-toggle)
+   ("z" "Toggle Do Not Disturb" magnus-coord-toggle-dnd)]
   ["Chat"
    ("M" "Open chat center" magnus-chat)]
   ["Navigation"

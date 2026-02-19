@@ -26,9 +26,6 @@
 (declare-function magnus-attention-set-return-buffer "magnus-attention")
 (declare-function magnus-coord-record-contact "magnus-coord")
 (declare-function magnus-coord-record-user-active "magnus-coord")
-(declare-function magnus-coord-sleep-agent "magnus-coord")
-(declare-function magnus-coord-wake-agent "magnus-coord")
-(declare-function magnus-coord-agent-sleeping-p "magnus-coord")
 
 ;;; Faces
 
@@ -313,8 +310,7 @@ dead or missing, fall back to the first running agent."
 ;;; Sending messages
 
 (defun magnus-chat-send ()
-  "Send the current input to the selected agent.
-Slash commands like /sleep and /wake are intercepted before sending."
+  "Send the current input to the selected agent."
   (interactive)
   (magnus-chat--refresh-target)
   (unless magnus-chat--target
@@ -332,18 +328,12 @@ Slash commands like /sleep and /wake are intercepted before sending."
     ;; Clear input area
     (let ((inhibit-read-only t))
       (delete-region magnus-chat--input-marker (point-max)))
-    (if (magnus-chat--handle-slash-command input)
-        ;; Command was handled — just redraw prompt
-        (progn
-          (magnus-chat--redraw-prompt)
-          (goto-char (point-max)))
-      ;; Normal message — send to vterm
-      (magnus-chat--render-outgoing input magnus-chat--target)
-      (magnus-chat--send-to-vterm magnus-chat--target input)
-      (magnus-coord-record-contact (magnus-instance-id magnus-chat--target))
-      (magnus-coord-record-user-active)
-      (magnus-chat--redraw-prompt)
-      (goto-char (point-max)))))
+    (magnus-chat--render-outgoing input magnus-chat--target)
+    (magnus-chat--send-to-vterm magnus-chat--target input)
+    (magnus-coord-record-contact (magnus-instance-id magnus-chat--target))
+    (magnus-coord-record-user-active)
+    (magnus-chat--redraw-prompt)
+    (goto-char (point-max))))
 
 (defun magnus-chat--send-to-vterm (instance message)
   "Send MESSAGE to INSTANCE's vterm buffer.
@@ -414,64 +404,6 @@ Delays the Return keystroke so the TUI can process the pasted text."
   (interactive)
   (when (y-or-n-p "Clear chat history? ")
     (magnus-chat--setup-buffer (current-buffer))))
-
-;;; Slash commands
-
-(defun magnus-chat--handle-slash-command (input)
-  "Handle INPUT as a slash command if it starts with /.
-Returns non-nil if the command was handled."
-  (cond
-   ((string-match "\\`/sleep\\(?:\\s-+\\(.+\\)\\)?\\'" input)
-    (magnus-chat--cmd-sleep (match-string 1 input))
-    t)
-   ((string-match "\\`/wake\\(?:\\s-+\\(.+\\)\\)?\\'" input)
-    (magnus-chat--cmd-wake (match-string 1 input))
-    t)
-   (t nil)))
-
-(defun magnus-chat--cmd-sleep (arg)
-  "Handle the /sleep command.
-With no ARG, put all running agents except the current target to sleep.
-With ARG, put that specific agent to sleep."
-  (if arg
-      (if-let ((inst (magnus-instances-get-by-name (string-trim arg))))
-          (progn
-            (magnus-coord-sleep-agent inst)
-            (magnus-chat--render-event
-             (format "%s is now sleeping" (magnus-instance-name inst))))
-        (magnus-chat--render-event (format "No agent named '%s'" arg)))
-    ;; Sleep all except current target
-    (let ((count 0))
-      (dolist (inst (magnus-chat--running-agents))
-        (unless (or (string= (magnus-instance-id inst)
-                              (magnus-instance-id magnus-chat--target))
-                    (magnus-coord-agent-sleeping-p inst))
-          (magnus-coord-sleep-agent inst)
-          (setq count (1+ count))))
-      (magnus-chat--render-event
-       (format "Put %d agent%s to sleep (keeping %s awake)"
-               count (if (= count 1) "" "s")
-               (magnus-instance-name magnus-chat--target))))))
-
-(defun magnus-chat--cmd-wake (arg)
-  "Handle the /wake command.
-With no ARG, wake all sleeping agents.
-With ARG, wake that specific agent."
-  (if arg
-      (if-let ((inst (magnus-instances-get-by-name (string-trim arg))))
-          (progn
-            (magnus-coord-wake-agent inst)
-            (magnus-chat--render-event
-             (format "%s is now awake" (magnus-instance-name inst))))
-        (magnus-chat--render-event (format "No agent named '%s'" arg)))
-    ;; Wake all sleeping agents
-    (let ((count 0))
-      (dolist (inst (magnus-instances-list))
-        (when (magnus-coord-agent-sleeping-p inst)
-          (magnus-coord-wake-agent inst)
-          (setq count (1+ count))))
-      (magnus-chat--render-event
-       (format "Woke %d agent%s" count (if (= count 1) "" "s"))))))
 
 ;;; Typing interleave protection
 
