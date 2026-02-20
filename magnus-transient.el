@@ -27,6 +27,7 @@
 (declare-function magnus-attention-next "magnus-attention")
 (declare-function magnus-attention-show-queue "magnus-attention")
 (declare-function magnus-coord-toggle-dnd "magnus-coord")
+(declare-function magnus-retro "magnus-coord")
 (declare-function magnus-health-toggle "magnus-health")
 (declare-function magnus-process-create-headless "magnus-process")
 (declare-function magnus-chat "magnus-chat")
@@ -55,7 +56,8 @@
    ("w" "Copy to clipboard" magnus-context-copy-for-agent)]
   ["Coordination (agent communication)"
    ("C" "Open coordination file" magnus-status-coordination)
-   ("I" "Open agent instructions" magnus-transient-open-instructions)]
+   ("I" "Open agent instructions" magnus-transient-open-instructions)
+   ("F" "Session retrospective" magnus-retro)]
   ["Attention (permission requests)"
    ("a" "Next in attention queue" magnus-attention-next)
    ("A" "Show attention queue" magnus-attention-show-queue)

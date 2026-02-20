@@ -27,6 +27,7 @@
 (defvar magnus-default-directory)
 (defvar magnus-instance-name-generator)
 (defvar magnus-buffer-name)
+(defvar magnus--summon-context)
 
 ;;; Process creation
 
@@ -72,18 +73,23 @@ NAME is the instance name.  If nil, auto-generates one."
       ;; Set up process sentinel
       (magnus-process--setup-sentinel instance buffer)
       ;; Send onboarding message after Claude starts
-      (run-with-timer 3 nil #'magnus-process--send-onboarding instance)
+      ;; Capture summon context now (dynamic binding unwinds before timer fires)
+      (let ((summon-ctx magnus--summon-context))
+        (run-with-timer 3 nil #'magnus-process--send-onboarding
+                        instance summon-ctx))
       ;; Watch for new session to appear
       (magnus-process--watch-for-session instance directory sessions-before)
       buffer)))
 
-(defun magnus-process--send-onboarding (instance)
+(defun magnus-process--send-onboarding (instance &optional summon-context)
   "Send onboarding message to INSTANCE.
+SUMMON-CONTEXT, if non-nil, is a plist with :sender and :reason
+from an agent-initiated summon.
 Delays the Return keystroke so the terminal has time to process
 the full message text before submitting."
   (when-let ((buffer (magnus-instance-buffer instance)))
     (when (buffer-live-p buffer)
-      (let ((msg (magnus-process--onboarding-message instance)))
+      (let ((msg (magnus-process--onboarding-message instance summon-context)))
         (with-current-buffer buffer
           (vterm-send-string msg))
         ;; Delay Return so the TUI can digest the pasted text
@@ -113,11 +119,11 @@ Path is <directory>/.claude/agents/<name>/busy."
     (unless (file-directory-p dir)
       (make-directory dir t))))
 
-(defun magnus-process--onboarding-message (instance)
+(defun magnus-process--onboarding-message (instance &optional summon-context)
   "Generate onboarding message for INSTANCE.
-If the agent has a memory file from previous sessions, includes
-instructions to read it first.  If a previous session trace exists,
-includes that path too."
+SUMMON-CONTEXT, if non-nil, is a plist with :sender and :reason.
+Tailors the message for new vs returning agents, and includes
+summon context when the agent was brought back by another agent."
   (let* ((name (magnus-instance-name instance))
          (memory-path (magnus-process--agent-memory-path instance))
          (has-memory (file-exists-p memory-path))
@@ -125,40 +131,93 @@ includes that path too."
          (prev-trace (when prev-session
                        (magnus-process--session-jsonl-path
                         (magnus-instance-directory instance)
-                        prev-session)))
-         (memory-preamble
-          (when has-memory
-            (concat
-             (format "You are %s. You've worked in this project before — your accumulated memory is at .claude/agents/%s/memory.md. Read it now; that file is you from previous sessions."
-                     name name)
-             (if prev-trace
-                 (format " Your most recent session trace is at %s — skim it to catch up on what just happened.\n\n"
-                         prev-trace)
-               "\n\n")))))
-    (concat
-     (or memory-preamble "")
-     (format "Welcome%s! You are agent '%s', part of a multi-agent team managed by Magnus (an Emacs coordination tool). Other agents may be working in this project right now.
+                        prev-session))))
+    (if has-memory
+        (magnus-process--onboarding-returning name prev-trace summon-context)
+      (magnus-process--onboarding-new name summon-context))))
 
-Before you start coding, please go through these steps — they keep everyone in sync:
+(defun magnus-process--onboarding-returning (name prev-trace summon-context)
+  "Generate onboarding for a returning agent NAME.
+PREV-TRACE is the path to the previous session trace, or nil.
+SUMMON-CONTEXT is a plist with :sender and :reason, or nil."
+  (concat
+   (format "You are %s. You've been here before.\n\n" name)
+   (format "\
+Your memory is at .claude/agents/%s/memory.md — read it now, before anything \
+else. That file is you: decisions you made, patterns you discovered, \
+relationships with other agents, work left unfinished. Everything that makes \
+you *you* persists there.\n" name)
+   (if prev-trace
+       (format "\nYour last session trace: %s — skim it for recent context.\n" prev-trace)
+     "")
+   (if summon-context
+       (format "\n\
+%s summoned you back. Reason: %s\n\
+After catching up on your memory and the coordination file, \
+prioritize their request. Find them in .magnus-coord.md.\n"
+               (plist-get summon-context :sender)
+               (plist-get summon-context :reason))
+     "")
+   (format "\n\
+Welcome back. You are one of several Claude Code agents managed by Magnus \
+(an Emacs orchestration tool). Others may be active right now.\n\n\
+Your home directory: .claude/agents/%s/\n\
+  memory.md — your persistent memory (update it as you work)\n\
+  busy      — create this when you need deep focus; Magnus stops nudging you\n\n\
+Get oriented:\n\
+1. Read .magnus-coord.md — the Active Work table shows who's doing what. \
+The Discoveries section has things others learned. The Log has recent messages.\n\
+2. Read .claude/magnus-instructions.md for the full coordination protocol.\n\
+3. Announce your plan in the Log and claim your files in Active Work.\n\n\
+While working:\n\
+- Check .magnus-coord.md periodically for messages and discoveries from teammates.\n\
+- When you learn something non-obvious, add it to the Discoveries section.\n\
+- @mention an agent in the Log to get their attention — they are notified instantly.\n\
+- Run: ls .claude/agents/ — see who else has worked here. Their memory files \
+are at .claude/agents/<name>/memory.md. Read them if you need context on past work.\n\
+- Need a dormant expert back? Write [SUMMON @agent-name] reason in the coord log. \
+Magnus confirms with the user and resurrects them.\n\
+- Before you sign off, update your memory file. Write down what you learned, \
+what you decided, what's unfinished. Future-you depends on it.\n\n\
+Start with step 1."
+           name)))
 
-1. Read .claude/magnus-instructions.md — it explains how agents coordinate here.
-2. Read .magnus-coord.md — check the Active Work table to see what others are doing, and the Discoveries section for things they've learned.
-3. In the Log section of .magnus-coord.md, announce what you plan to work on and which files you'll touch.
-4. Check the Active Work table for conflicts — if another agent claims files you need, @mention them to coordinate.
-5. Add your row to the Active Work table with your name, area, status 'in-progress', and files.
-6. Then begin coding.
-
-While working:
-- Update .magnus-coord.md when you finish tasks or change scope.
-- If you learn something non-obvious, add it to the Discoveries section — other agents will read it.
-- If you need another agent's attention, @mention them in the Log — they get notified automatically.
-- Check .magnus-coord.md periodically for messages and discoveries.
-- If you need uninterrupted focus, create .claude/agents/%s/busy — Magnus will stop nudging you. Delete it when you're done.
-
-Please start with step 1 now."
-             (if has-memory " back" "")
-             name
-             name))))
+(defun magnus-process--onboarding-new (name summon-context)
+  "Generate onboarding for a new agent NAME.
+SUMMON-CONTEXT is a plist with :sender and :reason, or nil."
+  (concat
+   (if summon-context
+       (format "\
+You were summoned by %s — %s. Once you're oriented, prioritize their request.\n\n"
+               (plist-get summon-context :sender)
+               (plist-get summon-context :reason))
+     "")
+   (format "\
+Welcome! You are agent '%s', one of several Claude Code agents managed by \
+Magnus (an Emacs orchestration tool). Others may be active right now.\n\n\
+Your home directory: .claude/agents/%s/\n\
+  memory.md — doesn't exist yet. You'll create it before you leave.\n\
+  busy      — create this when you need deep focus; Magnus stops nudging you\n\n\
+Get oriented:\n\
+1. Read .magnus-coord.md — the Active Work table shows who's doing what. \
+The Discoveries section has things others learned. The Log has recent messages.\n\
+2. Read .claude/magnus-instructions.md for the full coordination protocol.\n\
+3. Announce your plan in the Log and claim your files in Active Work.\n\n\
+While working:\n\
+- Check .magnus-coord.md periodically for messages and discoveries from teammates.\n\
+- When you learn something non-obvious, add it to the Discoveries section.\n\
+- @mention an agent in the Log to get their attention — they are notified instantly.\n\
+- Run: ls .claude/agents/ — you'll see who's been here before you. Their memory \
+files are at .claude/agents/<name>/memory.md. Read them — you'll find context, \
+gotchas, and decisions that save you hours.\n\
+- Need a dormant expert back? Write [SUMMON @agent-name] reason in the coord log. \
+Magnus confirms with the user and resurrects them.\n\
+- Before you sign off, write your memory to .claude/agents/%s/memory.md. \
+Record what you learned, decisions you made, gotchas you hit, relationships with \
+other agents, and any unfinished work. This is how future-you picks up where you \
+left off.\n\n\
+Start with step 1."
+           name name name)))
 
 (defun magnus-process--list-sessions (directory)
   "List all session IDs for DIRECTORY.

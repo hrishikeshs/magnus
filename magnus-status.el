@@ -22,6 +22,8 @@
 
 (declare-function magnus-dispatch "magnus-transient")
 (declare-function magnus-coord-agent-busy-p "magnus-coord")
+(declare-function magnus-coord--neglected-p "magnus-coord")
+(declare-function magnus-retro "magnus-coord")
 
 (defvar magnus-coord--do-not-disturb)
 (declare-function magnus-context "magnus-context")
@@ -103,6 +105,7 @@
     (define-key map (kbd "A") #'magnus-attention-show-queue)
     (define-key map (kbd "P") #'magnus-status-purge)
     (define-key map (kbd "z") #'magnus-coord-toggle-dnd)
+    (define-key map (kbd "F") #'magnus-retro)
     (define-key map (kbd "?") #'magnus-dispatch)
     (define-key map (kbd "q") #'quit-window)
     map)
@@ -216,6 +219,9 @@
     (when (magnus-coord-agent-busy-p instance)
       (insert " ")
       (insert (propertize "busy" 'face 'font-lock-warning-face)))
+    (when (magnus-coord--neglected-p instance)
+      (insert " ")
+      (insert (propertize "!" 'face 'font-lock-warning-face)))
     (insert " ")
     (insert health-ind)
     (insert " ")

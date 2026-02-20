@@ -65,6 +65,9 @@
 (declare-function magnus-process-create-headless "magnus-process")
 (declare-function magnus-health-start "magnus-health")
 (declare-function magnus-chat "magnus-chat")
+(declare-function magnus-coord-setup-attention-tracking "magnus-coord")
+(declare-function magnus-coord-attention-load "magnus-coord")
+(declare-function magnus-retro "magnus-coord")
 
 ;;; Customization
 
@@ -103,6 +106,12 @@ only tools listed here will be available."
   :type 'string
   :group 'magnus)
 
+(defcustom magnus-attention-data-file
+  (expand-file-name "magnus-attention-data.el" user-emacs-directory)
+  "File to persist attention pattern data across Emacs sessions."
+  :type 'file
+  :group 'magnus)
+
 (defcustom magnus-instance-name-generator #'magnus-generate-instance-name
   "Function to generate names for new instances.
 Takes the working directory as argument and returns a string."
@@ -133,6 +142,10 @@ Tries Projectile first (non-interactive), then `project.el' with
 (defvar magnus--creation-task nil
   "Task description for current agent creation.
 Temporarily bound during name generation for smart resurrection.")
+
+(defvar magnus--summon-context nil
+  "Summon context for current agent creation.
+Plist with :sender and :reason, bound during agent-initiated summoning.")
 
 (defvar magnus--name-adjectives
   '("swift" "bright" "calm" "bold" "keen"
@@ -290,6 +303,8 @@ Returns (NAME . REASON) if a valid match was found, or nil."
     (magnus-attention-start)
     (magnus-coord-start-reminders)
     (magnus-health-start)
+    (magnus-coord-attention-load)
+    (magnus-coord-setup-attention-tracking)
     (setq magnus--initialized t)))
 
 ;;;###autoload

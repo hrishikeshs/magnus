@@ -24,6 +24,8 @@
 (declare-function project-root "project")
 (declare-function vterm-send-return "vterm")
 
+(defvar magnus-claude-executable)
+
 ;;; Customization
 
 (defcustom magnus-coord-file ".magnus-coord.md"
@@ -148,16 +150,134 @@ This prevents partial reads when agents write concurrently."
   "Hash table: instance-id -> `float-time' of last user message.
 Agents contacted recently are skipped by periodic nudges.")
 
+;;; Attention pattern learning
+
+(defvar magnus-coord--attention-data (make-hash-table :test 'equal)
+  "Hash: agent-name -> plist (:visits (FLOAT-TIME...) :messages INTEGER).
+Visit timestamps are kept newest-first, max 50 entries.
+Persists across sessions for adaptive nudge intervals.")
+
+(defvar magnus-coord--attention-save-timer nil
+  "Debounced timer for saving attention data.")
+
+(defvar magnus-attention-data-file)
+
+(defun magnus-coord--record-visit (agent-name)
+  "Record a user visit to AGENT-NAME.
+Debounced: only records if last visit was more than 30 seconds ago."
+  (let* ((data (or (gethash agent-name magnus-coord--attention-data)
+                   (list :visits nil :messages 0)))
+         (visits (plist-get data :visits))
+         (last-visit (car visits)))
+    (when (or (null last-visit) (> (- (float-time) last-visit) 30))
+      (puthash agent-name
+               (plist-put data :visits
+                          (seq-take (cons (float-time) visits) 50))
+               magnus-coord--attention-data)
+      (magnus-coord--schedule-attention-save))))
+
+(defun magnus-coord--record-message (agent-name)
+  "Record that a chat message was sent to AGENT-NAME."
+  (let* ((data (or (gethash agent-name magnus-coord--attention-data)
+                   (list :visits nil :messages 0)))
+         (messages (or (plist-get data :messages) 0)))
+    (puthash agent-name
+             (plist-put data :messages (1+ messages))
+             magnus-coord--attention-data)))
+
+(defun magnus-coord--adaptive-interval (agent-name)
+  "Return adaptive nudge interval for AGENT-NAME in seconds.
+Agents visited frequently get longer intervals (less nudging).
+Agents rarely visited get shorter intervals (more nudging)."
+  (let* ((data (gethash agent-name magnus-coord--attention-data))
+         (visits (plist-get data :visits))
+         (default (or magnus-coord-reminder-interval 600)))
+    (if (and visits (>= (length visits) 3))
+        (let* ((recent (seq-take visits 10))
+               (intervals (cl-mapcar (lambda (a b) (- a b))
+                                     recent (cdr recent)))
+               (avg (/ (apply #'+ intervals) (float (length intervals)))))
+          (min default (max 300 (round (* avg 1.5)))))
+      default)))
+
+(defun magnus-coord--neglected-p (instance)
+  "Return non-nil if INSTANCE is overdue for user attention.
+Compares time since last visit against twice the adaptive interval."
+  (when (eq (magnus-instance-status instance) 'running)
+    (let* ((name (magnus-instance-name instance))
+           (data (gethash name magnus-coord--attention-data))
+           (visits (plist-get data :visits))
+           (last-visit (car visits))
+           (interval (magnus-coord--adaptive-interval name)))
+      (and last-visit
+           (> (- (float-time) last-visit) (* interval 2))))))
+
+(defun magnus-coord--on-buffer-focus (_frame)
+  "Record when the user switches to an agent's buffer."
+  (let ((buf (window-buffer (selected-window))))
+    (dolist (instance (magnus-instances-list))
+      (when (eq buf (magnus-instance-buffer instance))
+        (magnus-coord--record-visit (magnus-instance-name instance))))))
+
+(defun magnus-coord-setup-attention-tracking ()
+  "Start tracking user attention patterns."
+  (add-hook 'window-buffer-change-functions
+            #'magnus-coord--on-buffer-focus))
+
+;;; Attention persistence
+
+(defun magnus-coord--schedule-attention-save ()
+  "Schedule a debounced save of attention data."
+  (when magnus-coord--attention-save-timer
+    (cancel-timer magnus-coord--attention-save-timer))
+  (setq magnus-coord--attention-save-timer
+        (run-with-idle-timer 5 nil #'magnus-coord-attention-save)))
+
+(defun magnus-coord-attention-save ()
+  "Save attention data to disk."
+  (setq magnus-coord--attention-save-timer nil)
+  (when (and (bound-and-true-p magnus-attention-data-file)
+             (hash-table-count magnus-coord--attention-data))
+    (let ((alist nil))
+      (maphash (lambda (k v) (push (cons k v) alist))
+               magnus-coord--attention-data)
+      (with-temp-file magnus-attention-data-file
+        (insert ";; Magnus attention data - do not edit manually\n")
+        (pp alist (current-buffer))))))
+
+(defun magnus-coord-attention-load ()
+  "Load attention data from disk."
+  (when (and (bound-and-true-p magnus-attention-data-file)
+             (file-exists-p magnus-attention-data-file))
+    (condition-case nil
+        (let ((alist (with-temp-buffer
+                       (insert-file-contents magnus-attention-data-file)
+                       (goto-char (point-min))
+                       (read (current-buffer)))))
+          (clrhash magnus-coord--attention-data)
+          (dolist (entry alist)
+            (puthash (car entry) (cdr entry) magnus-coord--attention-data)))
+      (error
+       (message "Magnus: failed to load attention data")))))
+
+;;; Contact recording
+
 (defun magnus-coord-record-contact (instance-id)
   "Record that INSTANCE-ID was just contacted by the user.
-Suppresses periodic nudges for this agent until the next interval."
-  (puthash instance-id (float-time) magnus-coord--last-contact))
+Suppresses periodic nudges for this agent until the next interval.
+Also updates attention pattern data."
+  (puthash instance-id (float-time) magnus-coord--last-contact)
+  (when-let ((instance (magnus-instances-get instance-id)))
+    (let ((name (magnus-instance-name instance)))
+      (magnus-coord--record-visit name)
+      (magnus-coord--record-message name))))
 
 (defun magnus-coord--recently-contacted-p (instance)
-  "Return non-nil if INSTANCE was contacted within the reminder interval."
+  "Return non-nil if INSTANCE was contacted within its adaptive interval."
   (let* ((id (magnus-instance-id instance))
+         (name (magnus-instance-name instance))
          (last (gethash id magnus-coord--last-contact))
-         (interval (or magnus-coord-reminder-interval 600)))
+         (interval (magnus-coord--adaptive-interval name)))
     (and last (< (- (float-time) last) interval))))
 
 (defvar magnus-coord--user-idle-p nil
@@ -305,6 +425,7 @@ Keeps only the last `magnus-coord-log-max-entries' entries."
 (declare-function magnus-process--agent-busy-path "magnus-process")
 (declare-function magnus-process--ensure-agent-dir "magnus-process")
 (declare-function magnus-process--session-jsonl-path "magnus-process")
+(declare-function magnus-process-create "magnus-process")
 
 (defun magnus-coord--on-user-idle ()
   "Called when the user has been idle for `magnus-coord-idle-threshold'.
@@ -429,6 +550,9 @@ instances restored from persistence."
 (defvar magnus-coord--processed-mentions nil
   "Alist of (directory . list-of-processed-mention-hashes) to avoid duplicates.")
 
+(defvar magnus-coord--processed-summons nil
+  "Alist of (directory . list-of-processed-summon-hashes) to avoid duplicates.")
+
 (defun magnus-coord-start-watching (directory)
   "Start watching the coordination file in DIRECTORY for @mentions."
   (let ((file (magnus-coord-file-path directory)))
@@ -442,8 +566,9 @@ instances restored from persistence."
                          (lambda (event)
                            (magnus-coord--handle-file-change directory event)))))
         (push (cons directory descriptor) magnus-coord--watchers)
-        ;; Initialize processed mentions from current content
-        (magnus-coord--init-processed-mentions directory)))))
+        ;; Initialize processed mentions and summons from current content
+        (magnus-coord--init-processed-mentions directory)
+        (magnus-coord--init-processed-summons directory)))))
 
 (defun magnus-coord-stop-watching (directory)
   "Stop watching the coordination file in DIRECTORY."
@@ -451,14 +576,17 @@ instances restored from persistence."
     (file-notify-rm-watch (cdr entry))
     (setq magnus-coord--watchers (assoc-delete-all directory magnus-coord--watchers))
     (setq magnus-coord--processed-mentions
-          (assoc-delete-all directory magnus-coord--processed-mentions))))
+          (assoc-delete-all directory magnus-coord--processed-mentions))
+    (setq magnus-coord--processed-summons
+          (assoc-delete-all directory magnus-coord--processed-summons))))
 
 (defun magnus-coord-stop-all-watchers ()
   "Stop all coordination file watchers."
   (dolist (entry magnus-coord--watchers)
     (ignore-errors (file-notify-rm-watch (cdr entry))))
   (setq magnus-coord--watchers nil)
-  (setq magnus-coord--processed-mentions nil))
+  (setq magnus-coord--processed-mentions nil)
+  (setq magnus-coord--processed-summons nil))
 
 (defun magnus-coord--init-processed-mentions (directory)
   "Initialize processed mentions for DIRECTORY from current file content."
@@ -473,10 +601,12 @@ instances restored from persistence."
 
 (defun magnus-coord--handle-file-change (directory event)
   "Handle a file change EVENT for DIRECTORY's coordination file."
-  (when (and magnus-coord-mention-notify
-             (eq (nth 1 event) 'changed))
+  (when (eq (nth 1 event) 'changed)
     (condition-case err
-        (magnus-coord--check-new-mentions directory)
+        (progn
+          (when magnus-coord-mention-notify
+            (magnus-coord--check-new-mentions directory))
+          (magnus-coord--check-new-summons directory))
       (error
        (message "Magnus: coord file change handler error: %s"
                 (error-message-string err))))))
@@ -554,6 +684,296 @@ Formats the message as a direct user instruction so Claude acts on it."
                 (format "Another agent mentioned you in .magnus-coord.md: \"%s\" — Read the file, do what's asked, and log your progress there."
                         context-line))))
     (magnus-coord-nudge-agent instance msg)))
+
+;;; Agent-initiated summoning
+
+(defvar magnus--summon-context)
+
+(defun magnus-coord--init-processed-summons (directory)
+  "Initialize processed summons for DIRECTORY from current file content."
+  (let ((file (magnus-coord-file-path directory)))
+    (when (file-exists-p file)
+      (let ((summons (magnus-coord--extract-summons
+                      (with-temp-buffer
+                        (insert-file-contents file)
+                        (buffer-string)))))
+        (setf (alist-get directory magnus-coord--processed-summons nil nil #'equal)
+              (mapcar #'magnus-coord--summon-hash summons))))))
+
+(defun magnus-coord--extract-summons (content)
+  "Extract all [SUMMON @name] patterns from CONTENT.
+Returns list of (target sender reason) tuples."
+  (let (summons)
+    (with-temp-buffer
+      (insert content)
+      (goto-char (point-min))
+      (while (re-search-forward
+              "\\[SUMMON @\\([a-zA-Z][-a-zA-Z0-9_]*\\)\\][[:space:]]*\\(.*\\)"
+              nil t)
+        (let* ((target (match-string 1))
+               (reason (string-trim (match-string 2)))
+               (line (buffer-substring-no-properties
+                      (line-beginning-position)
+                      (line-end-position)))
+               (sender (when (string-match "\\] \\([^:]+\\):" line)
+                         (match-string 1 line))))
+          (push (list target (or sender "unknown") reason) summons))))
+    (nreverse summons)))
+
+(defun magnus-coord--summon-hash (summon)
+  "Create a hash for SUMMON to track duplicates."
+  (secure-hash 'md5 (format "%s:%s:%s"
+                             (nth 0 summon) (nth 1 summon) (nth 2 summon))))
+
+(defun magnus-coord--check-new-summons (directory)
+  "Check for new [SUMMON @name] patterns in DIRECTORY's coordination file."
+  (let* ((file (magnus-coord-file-path directory))
+         (content (when (file-exists-p file)
+                    (with-temp-buffer
+                      (insert-file-contents file)
+                      (buffer-string))))
+         (summons (when content (magnus-coord--extract-summons content)))
+         (processed (alist-get directory magnus-coord--processed-summons
+                               nil nil #'equal)))
+    (dolist (summon summons)
+      (let ((hash (magnus-coord--summon-hash summon)))
+        (unless (member hash processed)
+          ;; Wait for user to be idle before prompting
+          (run-with-idle-timer 5 nil
+                               #'magnus-coord--handle-summon directory summon)
+          (push hash processed))))
+    (setf (alist-get directory magnus-coord--processed-summons nil nil #'equal)
+          processed)))
+
+(defun magnus-coord--handle-summon (directory summon)
+  "Handle a SUMMON request in DIRECTORY.
+SUMMON is (target-name sender reason)."
+  (let* ((target (nth 0 summon))
+         (sender (nth 1 summon))
+         (reason (nth 2 summon))
+         (agents-dir (expand-file-name ".claude/agents/" directory))
+         (memory (expand-file-name (concat target "/memory.md") agents-dir))
+         (existing (mapcar #'magnus-instance-name (magnus-instances-list)))
+         (is-active (member target existing))
+         (is-dormant (and (file-exists-p memory) (not is-active))))
+    (cond
+     (is-dormant
+      (when (y-or-n-p
+             (format "Agent %s requests: summon %s (%s)? "
+                     sender target
+                     (if (string-empty-p reason) "no reason given" reason)))
+        (magnus-coord--execute-summon directory target sender reason)))
+     (is-active
+      ;; Target is already running — notify the requesting agent
+      (when-let ((requester (magnus-coord--find-instance-by-name sender directory)))
+        (magnus-coord-nudge-agent
+         requester
+         (format "%s is already online — @mention them in .magnus-coord.md instead."
+                 target)))))))
+
+(defun magnus-coord--execute-summon (directory target sender reason)
+  "Execute a summon of TARGET in DIRECTORY, requested by SENDER for REASON."
+  (let ((magnus--summon-context (list :sender sender :reason reason)))
+    (magnus-process-create directory target))
+  (magnus-coord-add-log directory "Magnus"
+                         (format "Summoned %s (requested by %s: %s)"
+                                 target sender reason)))
+
+;;; Session retrospectives
+
+(defvar magnus-coord--session-start-times (make-hash-table :test 'equal)
+  "Hash: directory -> float-time when first agent joined this session.")
+
+(defvar magnus-coord--retro-generating nil
+  "Non-nil while a retro is being generated.")
+
+(defvar magnus-coord--retro-output ""
+  "Accumulated output from the retro generator process.")
+
+(defvar magnus-coord--latest-retro (make-hash-table :test 'equal)
+  "Hash: directory -> path of the most recent retro file.")
+
+(defun magnus-coord--git-log-since (directory since-time)
+  "Get git log since SINCE-TIME in DIRECTORY."
+  (let ((default-directory directory)
+        (since (format-time-string "%Y-%m-%dT%H:%M:%S"
+                                   (seconds-to-time since-time))))
+    (condition-case nil
+        (with-temp-buffer
+          (call-process "git" nil t nil
+                        "log" "--oneline" (format "--since=%s" since))
+          (let ((output (string-trim (buffer-string))))
+            (if (string-empty-p output) "No commits" output)))
+      (error "No git data"))))
+
+(defun magnus-coord--collect-retro-data (directory)
+  "Collect session data for a retrospective in DIRECTORY.
+Returns a plist with :log, :discoveries, :decisions, :git, :start, :end."
+  (let* ((parsed (magnus-coord-parse directory))
+         (log-entries (plist-get parsed :log))
+         (decisions (plist-get parsed :decisions))
+         (start-time (gethash directory magnus-coord--session-start-times))
+         (git-log (when start-time
+                    (magnus-coord--git-log-since directory start-time)))
+         ;; Extract discoveries from the raw file
+         (discoveries (magnus-coord--extract-discoveries directory)))
+    (list :log log-entries
+          :discoveries discoveries
+          :decisions decisions
+          :git (or git-log "No git data")
+          :start start-time
+          :end (float-time))))
+
+(defun magnus-coord--extract-discoveries (directory)
+  "Extract the Discoveries section text from DIRECTORY's coord file."
+  (let ((file (magnus-coord-file-path directory)))
+    (when (file-exists-p file)
+      (with-temp-buffer
+        (insert-file-contents file)
+        (goto-char (point-min))
+        (when (re-search-forward "^## Discoveries" nil t)
+          (forward-line 1)
+          (let ((start (point))
+                (end (if (re-search-forward "^## " nil t)
+                         (match-beginning 0)
+                       (point-max))))
+            (string-trim (buffer-substring-no-properties start end))))))))
+
+(defun magnus-coord--format-log-for-retro (entries)
+  "Format log ENTRIES for the retro prompt."
+  (if entries
+      (mapconcat (lambda (e)
+                   (format "[%s] %s: %s"
+                           (plist-get e :time)
+                           (plist-get e :agent)
+                           (plist-get e :message)))
+                 (reverse entries) "\n")
+    "No log entries"))
+
+(defun magnus-coord--retro-prompt (data)
+  "Build the Claude prompt for a session retro from DATA."
+  (format "Summarize this multi-agent coding session. Be concise and useful.
+
+## Coordination Log
+%s
+
+## Discoveries
+%s
+
+## Decisions
+%s
+
+## Git Commits This Session
+%s
+
+Write a session retrospective with these sections:
+- **Accomplished**: What got done (2-4 bullets)
+- **Decisions**: Key choices made and why
+- **Discovered**: Important learnings or gotchas
+- **Unfinished**: What's still pending
+- **Next**: Suggested priorities for next session
+
+Keep it under 250 words. No filler."
+          (magnus-coord--format-log-for-retro (plist-get data :log))
+          (or (plist-get data :discoveries) "None recorded")
+          (if (plist-get data :decisions)
+              (mapconcat #'identity (plist-get data :decisions) "\n")
+            "None recorded")
+          (plist-get data :git)))
+
+(defun magnus-coord-generate-retro (directory)
+  "Generate a session retrospective for DIRECTORY asynchronously."
+  (when (and (not magnus-coord--retro-generating)
+             (bound-and-true-p magnus-claude-executable)
+             (executable-find magnus-claude-executable))
+    (let ((data (magnus-coord--collect-retro-data directory)))
+      (setq magnus-coord--retro-generating t
+            magnus-coord--retro-output "")
+      (condition-case err
+          (make-process
+           :name "magnus-retro-gen"
+           :command (list magnus-claude-executable
+                         "--print" (magnus-coord--retro-prompt data))
+           :connection-type 'pipe
+           :filter (lambda (_proc output)
+                     (setq magnus-coord--retro-output
+                           (concat magnus-coord--retro-output output)))
+           :sentinel (lambda (_proc event)
+                       (let ((status (string-trim event)))
+                         (if (string-prefix-p "finished" status)
+                             (magnus-coord--save-retro
+                              directory magnus-coord--retro-output data)
+                           (message "Magnus retro: generator %s" status))
+                         (setq magnus-coord--retro-generating nil))))
+        (error
+         (setq magnus-coord--retro-generating nil)
+         (message "Magnus retro: %s" (error-message-string err)))))))
+
+(defun magnus-coord--save-retro (directory content data)
+  "Save retro CONTENT for DIRECTORY with session DATA metadata."
+  (let* ((retros-dir (expand-file-name ".claude/retros/" directory))
+         (timestamp (format-time-string "%Y-%m-%d-%H%M%S"))
+         (file (expand-file-name (concat timestamp ".md") retros-dir))
+         (start (plist-get data :start))
+         (end-time (plist-get data :end)))
+    (unless (file-directory-p retros-dir)
+      (make-directory retros-dir t))
+    (with-temp-file file
+      (insert (format "# Session Retrospective — %s\n\n" timestamp))
+      (when start
+        (insert (format "**Session**: %s to %s\n\n"
+                        (format-time-string "%H:%M" (seconds-to-time start))
+                        (format-time-string "%H:%M" (seconds-to-time end-time)))))
+      (insert content)
+      (insert "\n"))
+    (message "Magnus: session retro saved. Press F in magnus to view.")
+    ;; Store the path for quick retrieval
+    (puthash directory file magnus-coord--latest-retro)))
+
+(defun magnus-coord--display-retro (file)
+  "Display retro FILE in a buffer."
+  (when (and file (file-exists-p file))
+    (let ((buf (get-buffer-create "*magnus-retro*")))
+      (with-current-buffer buf
+        (let ((inhibit-read-only t))
+          (erase-buffer)
+          (insert-file-contents file)
+          (goto-char (point-min)))
+        (special-mode)
+        (setq-local truncate-lines nil)
+        (setq-local word-wrap t))
+      (switch-to-buffer buf))))
+
+(defun magnus-coord--find-latest-retro (directory)
+  "Find the most recent retro file in DIRECTORY."
+  (or (gethash directory magnus-coord--latest-retro)
+      (let ((retros-dir (expand-file-name ".claude/retros/" directory)))
+        (when (file-directory-p retros-dir)
+          (let ((files (directory-files retros-dir t "\\.md$")))
+            (car (last (sort files #'string<))))))))
+
+(defun magnus-retro ()
+  "Show the latest session retrospective, or generate one.
+If agents are running, generates a mid-session retro.
+If no agents are running, shows the most recent saved retro."
+  (interactive)
+  (let* ((dir (or (when-let ((inst (car (magnus-instances-list))))
+                    (magnus-instance-directory inst))
+                  (magnus-coord--get-directory)))
+         (has-agents (cl-some
+                      (lambda (inst)
+                        (and (string= (magnus-instance-directory inst) dir)
+                             (eq (magnus-instance-status inst) 'running)))
+                      (magnus-instances-list))))
+    (if has-agents
+        (progn
+          (message "Generating mid-session retro...")
+          (magnus-coord-generate-retro dir))
+      ;; No agents — show latest saved retro
+      (let ((file (magnus-coord--find-latest-retro dir)))
+        (if file
+            (magnus-coord--display-retro file)
+          (user-error "No retrospectives found for this project"))))))
 
 ;;; Coordination file management
 
@@ -935,7 +1355,10 @@ with stale statuses like done, died, finished, completed, stopped."
     (magnus-coord-add-log directory name "Joined the session")
     ;; Start watching for @mentions if not already
     (unless (assoc directory magnus-coord--watchers)
-      (magnus-coord-start-watching directory))))
+      (magnus-coord-start-watching directory))
+    ;; Track session start time for retrospectives
+    (unless (gethash directory magnus-coord--session-start-times)
+      (puthash directory (float-time) magnus-coord--session-start-times))))
 
 (defun magnus-coord-unregister-agent (directory instance)
   "Unregister INSTANCE from DIRECTORY's coordination file."
@@ -949,6 +1372,8 @@ with stale statuses like done, died, finished, completed, stopped."
                              (string= (magnus-instance-directory inst) directory)))
                       (magnus-instances-list))))
       (when (zerop remaining)
+        (magnus-coord-generate-retro directory)
+        (remhash directory magnus-coord--session-start-times)
         (magnus-coord-stop-watching directory)
         (magnus-coord-mark-session-end directory)))))
 

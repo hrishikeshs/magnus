@@ -429,7 +429,7 @@ Also returns the ID when the input area has unsent text."
   "Open the magnus chat command center."
   (interactive)
   (let ((buf (get-buffer-create magnus-chat-buffer-name)))
-    (unless (eq (buffer-local-value 'major-mode buf) 'magnus-chat-mode)
+    (unless (with-current-buffer buf (derived-mode-p 'magnus-chat-mode))
       (magnus-chat--setup-buffer buf))
     ;; Refresh agent list and header
     (with-current-buffer buf

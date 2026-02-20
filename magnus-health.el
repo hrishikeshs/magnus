@@ -324,18 +324,24 @@ Falls back silently to the static list if generation fails."
              (executable-find magnus-claude-executable))
     (setq magnus-health-dashboard--generating t
           magnus-health-dashboard--gen-output "")
-    (make-process
-     :name "magnus-bloomberg-gen"
-     :command (list magnus-claude-executable
-                   "--print" magnus-health-dashboard--gen-prompt)
-     :connection-type 'pipe
-     :filter (lambda (_proc output)
-               (setq magnus-health-dashboard--gen-output
-                     (concat magnus-health-dashboard--gen-output output)))
-     :sentinel (lambda (_proc event)
-                 (when (string-prefix-p "finished" (string-trim event))
-                   (magnus-health-dashboard--parse-gen-output))
-                 (setq magnus-health-dashboard--generating nil)))))
+    (condition-case err
+        (make-process
+         :name "magnus-health-bloomberg-gen"
+         :command (list magnus-claude-executable
+                       "--print" magnus-health-dashboard--gen-prompt)
+         :connection-type 'pipe
+         :filter (lambda (_proc output)
+                   (setq magnus-health-dashboard--gen-output
+                         (concat magnus-health-dashboard--gen-output output)))
+         :sentinel (lambda (_proc event)
+                     (let ((status (string-trim event)))
+                       (if (string-prefix-p "finished" status)
+                           (magnus-health-dashboard--parse-gen-output)
+                         (message "Magnus terminal: generator %s" status))
+                       (setq magnus-health-dashboard--generating nil))))
+      (error
+       (setq magnus-health-dashboard--generating nil)
+       (message "Magnus terminal: %s" (error-message-string err))))))
 
 (defun magnus-health-dashboard--parse-gen-output ()
   "Parse generator output into individual messages and add to queue."
@@ -503,7 +509,7 @@ the side window from flickering or resizing."
   (magnus-health-dashboard--render))
 
 ;;;###autoload
-(defun magnus-bloomberg ()
+(defun magnus-health-bloomberg ()
   "Toggle the real-time dashboard."
   (interactive)
   (if magnus-health-dashboard--timer
@@ -545,7 +551,7 @@ the side window from flickering or resizing."
     (cancel-timer magnus-health-dashboard--timer)
     (setq magnus-health-dashboard--timer nil))
   ;; Kill any running generator process
-  (when-let ((proc (get-process "magnus-bloomberg-gen")))
+  (when-let ((proc (get-process "magnus-health-bloomberg-gen")))
     (when (process-live-p proc)
       (delete-process proc)))
   (setq magnus-health-dashboard--generating nil
