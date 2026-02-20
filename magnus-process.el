@@ -75,7 +75,7 @@ NAME is the instance name.  If nil, auto-generates one."
       ;; Send onboarding message after Claude starts
       ;; Capture summon context now (dynamic binding unwinds before timer fires)
       (let ((summon-ctx magnus--summon-context))
-        (run-with-timer 3 nil #'magnus-process--send-onboarding
+        (run-with-timer 5 nil #'magnus-process--send-onboarding
                         instance summon-ctx))
       ;; Watch for new session to appear
       (magnus-process--watch-for-session instance directory sessions-before)
@@ -89,7 +89,9 @@ Delays the Return keystroke so the terminal has time to process
 the full message text before submitting."
   (when-let ((buffer (magnus-instance-buffer instance)))
     (when (buffer-live-p buffer)
-      (let ((msg (magnus-process--onboarding-message instance summon-context)))
+      (let ((msg (replace-regexp-in-string
+                  "[\n\r]+" " "
+                  (magnus-process--onboarding-message instance summon-context))))
         (with-current-buffer buffer
           (vterm-send-string msg))
         ;; Delay Return so the TUI can digest the pasted text
@@ -496,7 +498,7 @@ Replaces slashes, spaces, and tildes with hyphens."
       (magnus-process--setup-sentinel instance buffer)
       ;; Only send onboarding if no session (fresh start)
       (unless session-id
-        (run-with-timer 3 nil #'magnus-process--send-onboarding instance))
+        (run-with-timer 5 nil #'magnus-process--send-onboarding instance))
       buffer)))
 
 ;;; Instance interaction
