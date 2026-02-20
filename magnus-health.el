@@ -325,11 +325,16 @@ Falls back silently to the static list if generation fails."
     (setq magnus-health-dashboard--generating t
           magnus-health-dashboard--gen-output "")
     (condition-case err
-        (make-process
-         :name "magnus-health-bloomberg-gen"
-         :command (list magnus-claude-executable
-                       "--print" magnus-health-dashboard--gen-prompt)
-         :connection-type 'pipe
+        (let ((process-environment
+               (cl-remove-if
+                (lambda (e) (string-prefix-p "CLAUDECODE=" e))
+                process-environment)))
+          (make-process
+           :name "magnus-health-bloomberg-gen"
+           :command (list magnus-claude-executable
+                         "--print" "--model" "haiku"
+                         magnus-health-dashboard--gen-prompt)
+           :connection-type 'pipe
          :filter (lambda (_proc output)
                    (setq magnus-health-dashboard--gen-output
                          (concat magnus-health-dashboard--gen-output output)))
@@ -338,7 +343,7 @@ Falls back silently to the static list if generation fails."
                        (if (string-prefix-p "finished" status)
                            (magnus-health-dashboard--parse-gen-output)
                          (message "Magnus terminal: generator %s" status))
-                       (setq magnus-health-dashboard--generating nil))))
+                       (setq magnus-health-dashboard--generating nil)))))
       (error
        (setq magnus-health-dashboard--generating nil)
        (message "Magnus terminal: %s" (error-message-string err))))))

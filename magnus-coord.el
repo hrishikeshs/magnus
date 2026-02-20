@@ -890,11 +890,16 @@ Keep it under 250 words. No filler."
       (setq magnus-coord--retro-generating t
             magnus-coord--retro-output "")
       (condition-case err
-          (make-process
-           :name "magnus-retro-gen"
-           :command (list magnus-claude-executable
-                         "--print" (magnus-coord--retro-prompt data))
-           :connection-type 'pipe
+          (let ((process-environment
+                 (cl-remove-if
+                  (lambda (e) (string-prefix-p "CLAUDECODE=" e))
+                  process-environment)))
+            (make-process
+             :name "magnus-retro-gen"
+             :command (list magnus-claude-executable
+                           "--print" "--model" "haiku"
+                           (magnus-coord--retro-prompt data))
+             :connection-type 'pipe
            :filter (lambda (_proc output)
                      (setq magnus-coord--retro-output
                            (concat magnus-coord--retro-output output)))
@@ -904,7 +909,7 @@ Keep it under 250 words. No filler."
                              (magnus-coord--save-retro
                               directory magnus-coord--retro-output data)
                            (message "Magnus retro: generator %s" status))
-                         (setq magnus-coord--retro-generating nil))))
+                         (setq magnus-coord--retro-generating nil)))))
         (error
          (setq magnus-coord--retro-generating nil)
          (message "Magnus retro: %s" (error-message-string err)))))))

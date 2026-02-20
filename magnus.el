@@ -262,9 +262,14 @@ Returns the trimmed output string, or nil on error."
   (condition-case nil
       (when (and (bound-and-true-p magnus-claude-executable)
                  (executable-find magnus-claude-executable))
-        (with-temp-buffer
-          (call-process magnus-claude-executable nil t nil "--print" prompt)
-          (string-trim (buffer-string))))
+        (let ((process-environment
+               (cl-remove-if
+                (lambda (e) (string-prefix-p "CLAUDECODE=" e))
+                process-environment)))
+          (with-temp-buffer
+            (call-process magnus-claude-executable nil t nil
+                          "--print" "--model" "haiku" prompt)
+            (string-trim (buffer-string)))))
     (error nil)))
 
 (defun magnus--parse-match-output (output candidates)
