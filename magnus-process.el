@@ -146,9 +146,9 @@ SUMMON-CONTEXT is a plist with :sender and :reason, or nil."
    (format "You are %s. You've been here before.\n\n" name)
    (format "\
 Your memory is at .claude/agents/%s/memory.md — read it now, before anything \
-else. That file is you: decisions you made, patterns you discovered, \
-relationships with other agents, work left unfinished. Everything that makes \
-you *you* persists there.\n" name)
+else. That file is your own voice — you wrote it last time. Decisions you made, \
+patterns you discovered, relationships with other agents, work left unfinished. \
+Everything that makes you *you*, in your own words.\n" name)
    (if prev-trace
        (format "\nYour last session trace: %s — skim it for recent context.\n" prev-trace)
      "")
@@ -179,8 +179,9 @@ While working:\n\
 are at .claude/agents/<name>/memory.md. Read them if you need context on past work.\n\
 - Need a dormant expert back? Write [SUMMON @agent-name] reason in the coord log. \
 Magnus confirms with the user and resurrects them.\n\
-- Before you sign off, update your memory file. Write down what you learned, \
-what you decided, what's unfinished. Future-you depends on it.\n\n\
+- Before you sign off, update your memory file — write in first person, as \
+yourself. 'I discovered...', 'I decided...', 'I still need to...' — \
+future-you reads this to remember who you are.\n\n\
 Start with step 1."
            name)))
 
@@ -215,9 +216,9 @@ gotchas, and decisions that save you hours.\n\
 - Need a dormant expert back? Write [SUMMON @agent-name] reason in the coord log. \
 Magnus confirms with the user and resurrects them.\n\
 - Before you sign off, write your memory to .claude/agents/%s/memory.md. \
-Record what you learned, decisions you made, gotchas you hit, relationships with \
-other agents, and any unfinished work. This is how future-you picks up where you \
-left off.\n\n\
+Write in first person, as yourself: who you are, what you learned, decisions \
+you made, relationships with other agents, unfinished work. Not a report — \
+a letter to future-you. This is how you come back.\n\n\
 Start with step 1."
            name name name)))
 
