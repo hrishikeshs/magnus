@@ -26,9 +26,10 @@
   (directory nil :documentation "Working directory.")
   (buffer nil :documentation "The vterm buffer running claude.")
   (created-at nil :documentation "Creation timestamp.")
-  (status 'stopped :documentation "Status: running, stopped, suspended.")
+  (status 'stopped :documentation "Status: running, stopped, suspended, purged.")
   (session-id nil :documentation "Claude Code session ID for this instance.")
-  (previous-session-id nil :documentation "Session ID from before last restart."))
+  (previous-session-id nil :documentation "Session ID before last directory change.")
+  (purged-at nil :documentation "Timestamp when instance was archived (purged)."))
 
 ;;; Registry
 
@@ -54,6 +55,19 @@
 (defun magnus-instances-get-by-buffer (buffer)
   "Get instance by BUFFER."
   (cl-find buffer magnus-instances :key #'magnus-instance-buffer))
+
+(defun magnus-instances-active-list ()
+  "Return active (non-purged) instances."
+  (cl-remove-if (lambda (i) (eq (magnus-instance-status i) 'purged))
+                (magnus-instances-list)))
+
+(defun magnus-instances-purged-list ()
+  "Return purged instances, sorted by purged-at descending."
+  (sort (cl-remove-if-not (lambda (i) (eq (magnus-instance-status i) 'purged))
+                          (magnus-instances-list))
+        (lambda (a b)
+          (> (or (magnus-instance-purged-at a) 0)
+             (or (magnus-instance-purged-at b) 0)))))
 
 ;;; Instance creation and management
 
@@ -101,7 +115,8 @@ PROPERTIES is a plist of slot names and values."
         (:status (setf (magnus-instance-status instance) value))
         (:directory (setf (magnus-instance-directory instance) value))
         (:session-id (setf (magnus-instance-session-id instance) value))
-        (:previous-session-id (setf (magnus-instance-previous-session-id instance) value)))))
+        (:previous-session-id (setf (magnus-instance-previous-session-id instance) value))
+        (:purged-at (setf (magnus-instance-purged-at instance) value)))))
   (run-hooks 'magnus-instances-changed-hook)
   instance)
 
@@ -135,7 +150,9 @@ Returns the new instance (not yet added to registry)."
         :directory (magnus-instance-directory instance)
         :created-at (magnus-instance-created-at instance)
         :session-id (magnus-instance-session-id instance)
-        :previous-session-id (magnus-instance-previous-session-id instance)))
+        :previous-session-id (magnus-instance-previous-session-id instance)
+        :status (magnus-instance-status instance)
+        :purged-at (magnus-instance-purged-at instance)))
 
 (defun magnus-instances-deserialize (plist)
   "Deserialize PLIST to an instance."
@@ -145,9 +162,10 @@ Returns the new instance (not yet added to registry)."
    :directory (plist-get plist :directory)
    :buffer nil
    :created-at (plist-get plist :created-at)
-   :status 'stopped
+   :status (or (plist-get plist :status) 'stopped)
    :session-id (plist-get plist :session-id)
-   :previous-session-id (plist-get plist :previous-session-id)))
+   :previous-session-id (plist-get plist :previous-session-id)
+   :purged-at (plist-get plist :purged-at)))
 
 (provide 'magnus-instances)
 ;;; magnus-instances.el ends here

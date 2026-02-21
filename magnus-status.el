@@ -80,16 +80,20 @@
   "Face for errored status (headless failed)."
   :group 'magnus)
 
+(defface magnus-status-purged
+  '((t :inherit font-lock-comment-face :slant italic))
+  "Face for purged (archived) instances."
+  :group 'magnus)
+
 ;;; Mode definition
 
 (defvar magnus-status-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "RET") #'magnus-status-visit)
     (define-key map (kbd "c") #'magnus-status-create)
-    (define-key map (kbd "k") #'magnus-status-kill)
-    (define-key map (kbd "K") #'magnus-status-kill-force)
+    (define-key map (kbd "k") #'magnus-status-archive)
     (define-key map (kbd "r") #'magnus-status-rename)
-    (define-key map (kbd "R") #'magnus-status-restart)
+    (define-key map (kbd "R") #'magnus-status-resurrect-purged)
     (define-key map (kbd "s") #'magnus-status-suspend)
     (define-key map (kbd "S") #'magnus-status-resume)
     (define-key map (kbd "d") #'magnus-status-chdir)
@@ -103,7 +107,7 @@
     (define-key map (kbd "p") #'magnus-status-previous)
     (define-key map (kbd "a") #'magnus-attention-next)
     (define-key map (kbd "A") #'magnus-attention-show-queue)
-    (define-key map (kbd "P") #'magnus-status-purge)
+    (define-key map (kbd "P") #'magnus-status-archive-all)
     (define-key map (kbd "z") #'magnus-coord-toggle-dnd)
     (define-key map (kbd "F") #'magnus-retro)
     (define-key map (kbd "?") #'magnus-dispatch)
@@ -146,6 +150,7 @@
         (magnus-status--insert-header)
         (magnus-status--insert-instances)
         (magnus-status--insert-coordination)
+        (magnus-status--insert-purged)
         (goto-char (point-min))
         (forward-line (1- line))
         (magnus-status--goto-instance-line)))))
@@ -166,7 +171,7 @@
   "Insert the status buffer header."
   (insert (propertize "Magnus" 'face 'magnus-status-section-heading))
   (insert " - Claude Code Instance Manager\n")
-  (insert (format "Instances: %d" (magnus-instances-count)))
+  (insert (format "Instances: %d" (length (magnus-instances-active-list))))
   (when magnus-coord--do-not-disturb
     (insert (propertize "  [DND]" 'face 'font-lock-warning-face)))
   (let ((attention-count (magnus-attention-pending-count)))
@@ -176,13 +181,19 @@
   (insert "\n\n"))
 
 (defun magnus-status--insert-instances ()
-  "Insert the list of instances."
-  (let ((instances (magnus-instances-list)))
-    (if (null instances)
+  "Insert the list of active (non-purged) instances."
+  (let ((instances (magnus-instances-active-list)))
+    (if (and (null instances) (null (magnus-instances-purged-list)))
         (magnus-status--insert-empty-state)
       (insert (propertize "Instances\n" 'face 'magnus-status-section-heading))
-      (dolist (instance instances)
-        (magnus-status--insert-instance instance)))))
+      (if (null instances)
+          (progn
+            (insert (propertize "  No active instances.\n"
+                                'face 'magnus-status-empty-hint))
+            (insert (propertize "  Press 'c' to create one, or 'R' to resurrect.\n"
+                                'face 'magnus-status-empty-hint)))
+        (dolist (instance instances)
+          (magnus-status--insert-instance instance))))))
 
 (defun magnus-status--insert-empty-state ()
   "Insert the empty state message."
@@ -229,9 +240,45 @@
     (insert "\n")
     (insert "    ")
     (insert (propertize (abbreviate-file-name directory) 'face 'magnus-status-instance-dir))
+    (when-let ((sid (magnus-instance-session-id instance)))
+      (insert " ")
+      (insert (propertize (format "[%.8s]" sid) 'face 'magnus-status-instance-dir)))
     (insert "\n")
     ;; Store instance ID as text property for commands
     (put-text-property (line-beginning-position -1) (point)
+                       'magnus-instance-id (magnus-instance-id instance))))
+
+(defun magnus-status--insert-purged ()
+  "Insert the purged instances section."
+  (let ((purged (magnus-instances-purged-list)))
+    (when purged
+      (insert "\n")
+      (insert (propertize "Purged\n" 'face 'magnus-status-section-heading))
+      (dolist (instance purged)
+        (magnus-status--insert-purged-instance instance)))))
+
+(defun magnus-status--insert-purged-instance (instance)
+  "Insert a line for purged INSTANCE."
+  (let* ((name (magnus-instance-name instance))
+         (directory (magnus-instance-directory instance))
+         (session-id (magnus-instance-session-id instance))
+         (age (if (magnus-instance-purged-at instance)
+                  (magnus-status--format-age
+                   (seconds-to-time (magnus-instance-purged-at instance)))
+                "unknown")))
+    (insert "  ")
+    (insert (propertize name 'face 'magnus-status-purged))
+    (when session-id
+      (insert " ")
+      (insert (propertize (format "[%.8s]" session-id)
+                          'face 'magnus-status-purged)))
+    (insert " ")
+    (insert (propertize (abbreviate-file-name directory)
+                        'face 'magnus-status-purged))
+    (insert " ")
+    (insert (propertize age 'face 'magnus-status-purged))
+    (insert "\n")
+    (put-text-property (line-beginning-position 0) (point)
                        'magnus-instance-id (magnus-instance-id instance))))
 
 (defun magnus-status--format-age (time)
@@ -258,8 +305,8 @@
         (magnus-status--insert-coordination-for-dir dir)))))
 
 (defun magnus-status--get-project-directories ()
-  "Get unique project directories from all instances."
-  (let ((dirs (mapcar #'magnus-instance-directory (magnus-instances-list))))
+  "Get unique project directories from active instances."
+  (let ((dirs (mapcar #'magnus-instance-directory (magnus-instances-active-list))))
     (delete-dups dirs)))
 
 (defun magnus-status--insert-coordination-for-dir (directory)
@@ -382,24 +429,33 @@ directory, or `magnus-default-directory', or `default-directory'."
     (magnus-process-create dir)
     (magnus-status-refresh)))
 
-(defun magnus-status-kill ()
-  "Kill the instance at point."
+(defun magnus-status-archive ()
+  "Archive the instance at point.
+Stops the process but preserves the session ID for later resurrection."
   (interactive)
   (if-let ((instance (magnus-status--get-instance-at-point)))
-      (when (yes-or-no-p (format "Kill instance '%s'? "
-                                 (magnus-instance-name instance)))
-        (magnus-process-kill-and-remove instance)
-        (magnus-status-refresh))
+      (if (eq (magnus-instance-status instance) 'purged)
+          (user-error "Instance '%s' is already archived"
+                      (magnus-instance-name instance))
+        (when (yes-or-no-p (format "Archive instance '%s'? "
+                                   (magnus-instance-name instance)))
+          (magnus-process-archive instance)
+          (magnus-status-refresh)
+          (message "Archived '%s' — resurrect with R"
+                   (magnus-instance-name instance))))
     (user-error "No instance at point")))
 
-(defun magnus-status-kill-force ()
-  "Forcefully kill the instance at point."
+(defun magnus-status-resurrect-purged ()
+  "Resurrect the purged instance at point."
   (interactive)
   (if-let ((instance (magnus-status--get-instance-at-point)))
-      (when (yes-or-no-p (format "Force kill instance '%s'? "
-                                 (magnus-instance-name instance)))
-        (magnus-process-kill-and-remove instance t)
-        (magnus-status-refresh))
+      (if (eq (magnus-instance-status instance) 'purged)
+          (progn
+            (magnus-process-resurrect-purged instance)
+            (magnus-status-refresh)
+            (message "Resurrected '%s'" (magnus-instance-name instance)))
+        (user-error "Instance '%s' is not archived"
+                    (magnus-instance-name instance)))
     (user-error "No instance at point")))
 
 (defun magnus-status-rename ()
@@ -411,15 +467,6 @@ directory, or `magnus-default-directory', or `default-directory'."
         (unless (string-empty-p new-name)
           (magnus-instances-update instance :name new-name)
           (magnus-status-refresh)))
-    (user-error "No instance at point")))
-
-(defun magnus-status-restart ()
-  "Restart the instance at point."
-  (interactive)
-  (if-let ((instance (magnus-status--get-instance-at-point)))
-      (progn
-        (magnus-process-restart instance)
-        (message "Restarting '%s'..." (magnus-instance-name instance)))
     (user-error "No instance at point")))
 
 (defun magnus-status-context ()
@@ -487,18 +534,19 @@ directory, or `magnus-default-directory', or `default-directory'."
         (magnus-status-refresh))
     (user-error "No instance at point")))
 
-(defun magnus-status-purge ()
-  "Kill and remove all instances."
+(defun magnus-status-archive-all ()
+  "Archive all active instances."
   (interactive)
-  (let ((count (magnus-instances-count)))
+  (let* ((active (magnus-instances-active-list))
+         (count (length active)))
     (if (zerop count)
-        (user-error "No instances to purge")
-      (when (yes-or-no-p (format "Kill and remove all %d instance%s? "
+        (user-error "No active instances to archive")
+      (when (yes-or-no-p (format "Archive all %d instance%s? "
                                  count (if (= count 1) "" "s")))
-        (dolist (instance (copy-sequence (magnus-instances-list)))
-          (magnus-process-kill-and-remove instance t))
+        (dolist (instance active)
+          (magnus-process-archive instance))
         (magnus-status-refresh)
-        (message "Purged %d instance%s" count (if (= count 1) "" "s"))))))
+        (message "Archived %d instance%s" count (if (= count 1) "" "s"))))))
 
 (provide 'magnus-status)
 ;;; magnus-status.el ends here

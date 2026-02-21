@@ -329,21 +329,24 @@ Falls back silently to the static list if generation fails."
                (cl-remove-if
                 (lambda (e) (string-prefix-p "CLAUDECODE=" e))
                 process-environment)))
-          (make-process
-           :name "magnus-health-bloomberg-gen"
-           :command (list magnus-claude-executable
-                         "--print" "--model" "haiku"
-                         magnus-health-dashboard--gen-prompt)
-           :connection-type 'pipe
-         :filter (lambda (_proc output)
-                   (setq magnus-health-dashboard--gen-output
-                         (concat magnus-health-dashboard--gen-output output)))
-         :sentinel (lambda (_proc event)
-                     (let ((status (string-trim event)))
-                       (if (string-prefix-p "finished" status)
-                           (magnus-health-dashboard--parse-gen-output)
-                         (message "Magnus terminal: generator %s" status))
-                       (setq magnus-health-dashboard--generating nil)))))
+          (let ((proc (make-process
+                       :name "magnus-health-bloomberg-gen"
+                       :command (list magnus-claude-executable
+                                     "--print" "--model" "haiku"
+                                     magnus-health-dashboard--gen-prompt)
+                       :connection-type 'pipe
+                       :filter (lambda (_proc output)
+                                 (setq magnus-health-dashboard--gen-output
+                                       (concat magnus-health-dashboard--gen-output output)))
+                       :sentinel (lambda (_proc event)
+                                   (let ((status (string-trim event)))
+                                     (if (string-prefix-p "finished" status)
+                                         (magnus-health-dashboard--parse-gen-output)
+                                       (message "Magnus terminal: generator %s" status))
+                                     (setq magnus-health-dashboard--generating nil))))))
+            ;; Close stdin so claude doesn't block waiting for input
+            (when (process-live-p proc)
+              (process-send-eof proc))))
       (error
        (setq magnus-health-dashboard--generating nil)
        (message "Magnus terminal: %s" (error-message-string err))))))

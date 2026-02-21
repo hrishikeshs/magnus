@@ -40,16 +40,15 @@
   "Magnus command dispatcher."
   ["Instance Actions"
    ("c" "Create instance" magnus-status-create)
-   ("k" "Kill instance" magnus-status-kill)
-   ("K" "Force kill instance" magnus-status-kill-force)
+   ("k" "Archive instance" magnus-status-archive)
+   ("R" "Resurrect purged" magnus-status-resurrect-purged)
    ("r" "Rename instance" magnus-status-rename)
-   ("R" "Restart instance" magnus-status-restart)
    ("s" "Suspend instance" magnus-status-suspend)
    ("S" "Resume instance" magnus-status-resume)
    ("d" "Change directory" magnus-status-chdir)
    ("m" "Send message" magnus-status-send-message)
    ("t" "Thinking trace" magnus-status-trace)
-   ("P" "Purge all instances" magnus-status-purge)]
+   ("P" "Archive all instances" magnus-status-archive-all)]
   ["Context (shared notes)"
    ("x" "Open context buffer" magnus-context)
    ("e" "Export to file" magnus-context-export-for-agent)
@@ -127,10 +126,9 @@ or `default-directory'."
   ["Instance"
    :description magnus-transient--instance-description
    ("RET" "Visit" magnus-status-visit)
-   ("k" "Kill" magnus-status-kill)
-   ("K" "Force kill" magnus-status-kill-force)
+   ("k" "Archive" magnus-status-archive)
+   ("R" "Resurrect" magnus-status-resurrect-purged)
    ("r" "Rename" magnus-status-rename)
-   ("R" "Restart" magnus-status-restart)
    ("s" "Suspend" magnus-status-suspend)
    ("S" "Resume" magnus-status-resume)
    ("d" "Change directory" magnus-status-chdir)

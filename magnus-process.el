@@ -385,36 +385,41 @@ If FORCE is non-nil, forcefully terminate."
            (kill-buffer buffer)))))
   (magnus-instances-update instance :status 'stopped :buffer nil))
 
-(defun magnus-process-kill-and-remove (instance &optional force)
-  "Kill INSTANCE and remove it from the registry.
-If FORCE is non-nil, forcefully terminate."
+(defun magnus-process-archive (instance)
+  "Archive INSTANCE: stop its process but keep it in the registry.
+The session ID is preserved so the agent can be resurrected later
+via `magnus-process-resurrect-purged'."
   (let ((directory (magnus-instance-directory instance)))
     (magnus-coord-unregister-agent directory instance))
-  (magnus-process-kill instance force)
-  (magnus-instances-remove instance))
+  ;; Graceful stop (same as kill, but we keep the instance)
+  (when-let ((buffer (magnus-instance-buffer instance)))
+    (when (buffer-live-p buffer)
+      (let ((process (get-buffer-process buffer)))
+        (when (and process (process-live-p process))
+          (if (magnus-process--headless-p instance)
+              (interrupt-process process)
+            (with-current-buffer buffer
+              (vterm-send-key "C-c")))))
+      (run-with-timer
+       1 nil
+       (lambda ()
+         (when (buffer-live-p buffer)
+           (kill-buffer buffer))))))
+  (magnus-instances-update instance
+                           :status 'purged
+                           :buffer nil
+                           :purged-at (float-time)))
 
-(defvar magnus-process--restarting nil
-  "Set of instance IDs currently mid-restart, to prevent double-spawn.")
-
-(defun magnus-process-restart (instance)
-  "Restart the Claude Code process for INSTANCE.
-Preserves the current session-id as previous-session-id so the
-new incarnation can read its predecessor's thinking trace."
-  (let ((id (magnus-instance-id instance)))
-    (when (member id magnus-process--restarting)
-      (user-error "Instance '%s' is already restarting"
+(defun magnus-process-resurrect-purged (instance)
+  "Resurrect a purged INSTANCE by resuming its Claude Code session."
+  (let ((session-id (magnus-instance-session-id instance))
+        (directory (magnus-instance-directory instance)))
+    (unless session-id
+      (user-error "No session ID for '%s' — cannot resume"
                   (magnus-instance-name instance)))
-    (push id magnus-process--restarting)
-    ;; Save current session as previous before killing
-    (when-let ((session (magnus-instance-session-id instance)))
-      (magnus-instances-update instance :previous-session-id session))
-    (magnus-process-kill instance)
-    (run-with-timer
-     1.5 nil
-     (lambda ()
-       (setq magnus-process--restarting
-             (delete id magnus-process--restarting))
-       (magnus-process--spawn instance)))))
+    (magnus-instances-update instance :status 'running :purged-at nil)
+    (magnus-coord-register-agent directory instance)
+    (magnus-process--spawn-with-session instance session-id)))
 
 (defun magnus-process-suspend (instance)
   "Suspend the Claude Code process for INSTANCE.

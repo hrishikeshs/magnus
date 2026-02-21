@@ -894,22 +894,25 @@ Keep it under 250 words. No filler."
                  (cl-remove-if
                   (lambda (e) (string-prefix-p "CLAUDECODE=" e))
                   process-environment)))
-            (make-process
-             :name "magnus-retro-gen"
-             :command (list magnus-claude-executable
-                           "--print" "--model" "haiku"
-                           (magnus-coord--retro-prompt data))
-             :connection-type 'pipe
-           :filter (lambda (_proc output)
-                     (setq magnus-coord--retro-output
-                           (concat magnus-coord--retro-output output)))
-           :sentinel (lambda (_proc event)
-                       (let ((status (string-trim event)))
-                         (if (string-prefix-p "finished" status)
-                             (magnus-coord--save-retro
-                              directory magnus-coord--retro-output data)
-                           (message "Magnus retro: generator %s" status))
-                         (setq magnus-coord--retro-generating nil)))))
+            (let ((proc (make-process
+                         :name "magnus-retro-gen"
+                         :command (list magnus-claude-executable
+                                       "--print" "--model" "haiku"
+                                       (magnus-coord--retro-prompt data))
+                         :connection-type 'pipe
+                         :filter (lambda (_proc output)
+                                   (setq magnus-coord--retro-output
+                                         (concat magnus-coord--retro-output output)))
+                         :sentinel (lambda (_proc event)
+                                     (let ((status (string-trim event)))
+                                       (if (string-prefix-p "finished" status)
+                                           (magnus-coord--save-retro
+                                            directory magnus-coord--retro-output data)
+                                         (message "Magnus retro: generator %s" status))
+                                       (setq magnus-coord--retro-generating nil))))))
+              ;; Close stdin so claude doesn't block waiting for input
+              (when (process-live-p proc)
+                (process-send-eof proc))))
         (error
          (setq magnus-coord--retro-generating nil)
          (message "Magnus retro: %s" (error-message-string err)))))))
