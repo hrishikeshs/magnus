@@ -59,6 +59,7 @@
 (declare-function magnus-process-create "magnus-process")
 (declare-function magnus-instances-list "magnus-instances")
 (declare-function magnus-instance-name "magnus-instances")
+(declare-function magnus-instance-directory "magnus-instances")
 (declare-function magnus-context-setup-hooks "magnus-context")
 (declare-function project-root "project")
 (declare-function magnus-attention-setup-hooks "magnus-attention")
@@ -74,6 +75,7 @@
 (declare-function magnus-attention-stop "magnus-attention")
 (declare-function magnus-instances-active-list "magnus-instances")
 (declare-function magnus-process-archive "magnus-process")
+(declare-function magnus-process--agent-memory-path "magnus-process")
 (declare-function magnus-persistence-save "magnus-persistence")
 
 (defvar magnus-context-directory)
@@ -126,6 +128,14 @@ package reinstalls."
   :type 'file
   :group 'magnus)
 
+(defcustom magnus-agents-index-file
+  (expand-file-name ".magnus/agents-index.el" (getenv "HOME"))
+  "File to store agent expertise index.
+Maps agent names to expertise keywords extracted by AI.
+Stored in ~/.magnus/ so it survives Emacs config resets."
+  :type 'file
+  :group 'magnus)
+
 (defcustom magnus-instance-name-generator #'magnus-generate-instance-name
   "Function to generate names for new instances.
 Takes the working directory as argument and returns a string."
@@ -136,6 +146,10 @@ Takes the working directory as argument and returns a string."
 
 (defvar magnus--initialized nil
   "Non-nil if magnus has been initialized.")
+
+(defvar magnus--agents-index nil
+  "In-memory agent expertise index.
+Alist of (DIRECTORY . ((NAME . TAGS-STRING) ...)).")
 
 ;;; Utilities
 
@@ -237,7 +251,8 @@ Returns the chosen name, or nil if no match or user declines."
 (defun magnus--dormant-candidates (directory existing)
   "Return dormant agent candidates in DIRECTORY.
 EXISTING is the list of names to exclude.
-Returns an alist of (NAME . MEMORY-SUMMARY) pairs."
+Returns an alist of (NAME . SUMMARY) pairs, using expertise index
+tags when available, falling back to memory excerpt."
   (let* ((agents-dir (expand-file-name ".claude/agents/" directory))
          (candidates nil))
     (when (file-directory-p agents-dir)
@@ -245,8 +260,12 @@ Returns an alist of (NAME . MEMORY-SUMMARY) pairs."
         (let ((memory (expand-file-name (concat entry "/memory.md") agents-dir)))
           (when (and (file-exists-p memory)
                      (not (member entry existing)))
-            (push (cons entry (magnus--read-memory-summary memory))
-                  candidates)))))
+            (let ((tags (magnus--agents-index-get directory entry)))
+              (push (cons entry
+                          (if tags
+                              (format "Expertise: %s" tags)
+                            (magnus--read-memory-summary memory)))
+                    candidates))))))
     (nreverse candidates)))
 
 (defun magnus--read-memory-summary (file)
@@ -298,6 +317,95 @@ Returns (NAME . REASON) if a valid match was found, or nil."
       (when (and (not (string-prefix-p "none" (downcase name)))
                  (assoc name candidates))
         (cons name reason)))))
+
+;;; Agent expertise index
+
+(defun magnus--agents-index-load ()
+  "Load the agents index from disk."
+  (when (file-exists-p magnus-agents-index-file)
+    (condition-case nil
+        (setq magnus--agents-index
+              (with-temp-buffer
+                (insert-file-contents magnus-agents-index-file)
+                (goto-char (point-min))
+                (read (current-buffer))))
+      (error
+       (message "Magnus: failed to load agents index")
+       (setq magnus--agents-index nil)))))
+
+(defun magnus--agents-index-save ()
+  "Save the agents index to disk."
+  (when magnus--agents-index
+    (let ((dir (file-name-directory magnus-agents-index-file)))
+      (unless (file-directory-p dir)
+        (make-directory dir t)))
+    (with-temp-file magnus-agents-index-file
+      (insert ";; Magnus agent expertise index - do not edit manually\n")
+      (pp magnus--agents-index (current-buffer)))))
+
+(defun magnus--agents-index-get (directory name)
+  "Get expertise tags for agent NAME in DIRECTORY."
+  (when-let ((dir-entry (assoc directory magnus--agents-index)))
+    (cdr (assoc name (cdr dir-entry)))))
+
+(defun magnus--agents-index-set (directory name tags)
+  "Set expertise TAGS for agent NAME in DIRECTORY."
+  (let ((dir-entry (assoc directory magnus--agents-index)))
+    (if dir-entry
+        (let ((agent-entry (assoc name (cdr dir-entry))))
+          (if agent-entry
+              (setcdr agent-entry tags)
+            (push (cons name tags) (cdr dir-entry))))
+      (push (cons directory (list (cons name tags)))
+            magnus--agents-index)))
+  (magnus--agents-index-save))
+
+(defun magnus--agents-index-update (instance)
+  "Update the expertise index for INSTANCE asynchronously.
+Reads the agent's memory file and extracts expertise keywords via haiku."
+  (let* ((name (magnus-instance-name instance))
+         (directory (magnus-instance-directory instance))
+         (memory-path (magnus-process--agent-memory-path instance)))
+    (when (and (file-exists-p memory-path)
+               (bound-and-true-p magnus-claude-executable)
+               (executable-find magnus-claude-executable))
+      (let* ((memory (with-temp-buffer
+                       (insert-file-contents memory-path)
+                       (buffer-string)))
+             (prompt (format "Read this agent memory and extract 3-5 expertise \
+keywords that describe what this agent knows. Reply with ONLY comma-separated \
+lowercase keywords, nothing else.\n\nMemory:\n%s" memory))
+             (process-environment
+              (cl-remove-if
+               (lambda (e) (string-prefix-p "CLAUDECODE=" e))
+               process-environment)))
+        (condition-case nil
+            (let ((proc (make-process
+                         :name (format "magnus-index-%s" name)
+                         :command (list magnus-claude-executable
+                                       "--print" "--model" "haiku" prompt)
+                         :connection-type 'pipe
+                         :filter (lambda (proc output)
+                                   (process-put
+                                    proc :output
+                                    (concat (or (process-get proc :output) "")
+                                            output)))
+                         :sentinel (magnus--agents-index-sentinel
+                                    directory name))))
+              (when (process-live-p proc)
+                (process-send-eof proc)))
+          (error nil))))))
+
+(defun magnus--agents-index-sentinel (directory name)
+  "Return a process sentinel for indexing agent NAME in DIRECTORY."
+  (lambda (proc event)
+    (let ((status (string-trim event)))
+      (if (string-prefix-p "finished" status)
+          (let ((tags (string-trim (or (process-get proc :output) ""))))
+            (unless (string-empty-p tags)
+              (magnus--agents-index-set directory name tags)
+              (message "Magnus: indexed %s → %s" name tags)))
+        (message "Magnus: indexing %s failed: %s" name status)))))
 
 ;;; Core functionality
 
@@ -353,6 +461,7 @@ Returns (NAME . REASON) if a valid match was found, or nil."
     (require 'magnus-chat)
     (magnus--migrate-data-files)
     (magnus-persistence-load)
+    (magnus--agents-index-load)
     (magnus-persistence--setup-autosave)
     (magnus-coord-ensure-watchers)
     (magnus-context-setup-hooks)

@@ -24,6 +24,7 @@
 (declare-function magnus-coord-agent-busy-p "magnus-coord")
 (declare-function magnus-coord--neglected-p "magnus-coord")
 (declare-function magnus-retro "magnus-coord")
+(declare-function magnus--agents-index-get "magnus")
 
 (defvar magnus-coord--do-not-disturb)
 (declare-function magnus-context "magnus-context")
@@ -83,6 +84,11 @@
 (defface magnus-status-purged
   '((t :inherit font-lock-comment-face :slant italic))
   "Face for purged (archived) instances."
+  :group 'magnus)
+
+(defface magnus-status-expertise
+  '((t :inherit font-lock-doc-face :slant italic))
+  "Face for expertise tags in status buffer."
   :group 'magnus)
 
 ;;; Mode definition
@@ -237,6 +243,10 @@
     (insert health-ind)
     (insert " ")
     (insert (propertize age 'face 'magnus-status-instance-dir))
+    (when-let ((tags (magnus--agents-index-get directory name)))
+      (insert " ")
+      (insert (propertize (magnus-status--truncate-tags tags)
+                          'face 'magnus-status-expertise)))
     (insert "\n")
     (insert "    ")
     (insert (propertize (abbreviate-file-name directory) 'face 'magnus-status-instance-dir))
@@ -272,6 +282,10 @@
       (insert " ")
       (insert (propertize (format "[%.8s]" session-id)
                           'face 'magnus-status-purged)))
+    (when-let ((tags (magnus--agents-index-get directory name)))
+      (insert " ")
+      (insert (propertize (magnus-status--truncate-tags tags)
+                          'face 'magnus-status-expertise)))
     (insert " ")
     (insert (propertize (abbreviate-file-name directory)
                         'face 'magnus-status-purged))
@@ -346,6 +360,12 @@
                                         'face 'magnus-status-instance-name)
                              (plist-get entry :message))))))
         (insert "\n")))))
+
+(defun magnus-status--truncate-tags (tags)
+  "Truncate TAGS string to 50 characters if needed."
+  (if (> (length tags) 50)
+      (concat (substring tags 0 47) "...")
+    tags))
 
 ;;; Navigation
 

@@ -21,6 +21,7 @@
 
 (declare-function magnus-status-refresh "magnus-status")
 (declare-function magnus-project-root "magnus")
+(declare-function magnus--agents-index-update "magnus")
 
 ;; Variables defined in magnus.el
 (defvar magnus-claude-executable)
@@ -409,7 +410,9 @@ via `magnus-process-resurrect-purged'."
   (magnus-instances-update instance
                            :status 'purged
                            :buffer nil
-                           :purged-at (float-time)))
+                           :purged-at (float-time))
+  ;; Index expertise tags asynchronously
+  (magnus--agents-index-update instance))
 
 (defun magnus-process-resurrect-purged (instance)
   "Resurrect a purged INSTANCE by resuming its Claude Code session."
