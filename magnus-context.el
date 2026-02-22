@@ -15,7 +15,7 @@
 ;; any agent can read at any time.
 ;;
 ;; The context persists across Emacs sessions but is stored outside
-;; the project directory (in ~/.emacs.d/magnus-context/).
+;; the project directory (in ~/.magnus/context/).
 
 ;;; Code:
 
@@ -27,14 +27,16 @@
 ;;; Customization
 
 (defcustom magnus-context-directory
-  (expand-file-name "magnus-context" user-emacs-directory)
-  "Directory to store context files."
+  (expand-file-name ".magnus/context" (getenv "HOME"))
+  "Directory to store context files.
+Stored in ~/.magnus/ so it survives Emacs config resets."
   :type 'directory
   :group 'magnus)
 
 (defcustom magnus-context-cache-directory
-  (expand-file-name "magnus-url-cache" user-emacs-directory)
-  "Directory to cache fetched URL content."
+  (expand-file-name ".magnus/url-cache" (getenv "HOME"))
+  "Directory to cache fetched URL content.
+Stored in ~/.magnus/ so it survives Emacs config resets."
   :type 'directory
   :group 'magnus)
 

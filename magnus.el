@@ -41,7 +41,7 @@
 ;; Key bindings in magnus buffer:
 ;;   RET - Switch to instance
 ;;   c   - Create new instance
-;;   k   - Kill instance
+;;   k   - Archive instance
 ;;   r   - Rename instance
 ;;   g   - Refresh status
 ;;   ?   - Show help menu
@@ -67,7 +67,17 @@
 (declare-function magnus-chat "magnus-chat")
 (declare-function magnus-coord-setup-attention-tracking "magnus-coord")
 (declare-function magnus-coord-attention-load "magnus-coord")
+(declare-function magnus-coord-stop-reminders "magnus-coord")
+(declare-function magnus-coord-nudge-agent "magnus-coord")
 (declare-function magnus-retro "magnus-coord")
+(declare-function magnus-health-stop "magnus-health")
+(declare-function magnus-attention-stop "magnus-attention")
+(declare-function magnus-instances-active-list "magnus-instances")
+(declare-function magnus-process-archive "magnus-process")
+(declare-function magnus-persistence-save "magnus-persistence")
+
+(defvar magnus-context-directory)
+(defvar magnus-context-cache-directory)
 
 ;;; Customization
 
@@ -89,8 +99,10 @@ If nil, uses the current project root or `default-directory'."
   :group 'magnus)
 
 (defcustom magnus-state-file
-  (expand-file-name "magnus-state.el" user-emacs-directory)
-  "File to persist instance state across Emacs sessions."
+  (expand-file-name ".magnus/state.el" (getenv "HOME"))
+  "File to persist instance state across Emacs sessions.
+Stored in ~/.magnus/ so it survives Emacs config resets and
+package reinstalls."
   :type 'file
   :group 'magnus)
 
@@ -107,8 +119,10 @@ only tools listed here will be available."
   :group 'magnus)
 
 (defcustom magnus-attention-data-file
-  (expand-file-name "magnus-attention-data.el" user-emacs-directory)
-  "File to persist attention pattern data across Emacs sessions."
+  (expand-file-name ".magnus/attention.el" (getenv "HOME"))
+  "File to persist attention pattern data across Emacs sessions.
+Stored in ~/.magnus/ so it survives Emacs config resets and
+package reinstalls."
   :type 'file
   :group 'magnus)
 
@@ -287,6 +301,43 @@ Returns (NAME . REASON) if a valid match was found, or nil."
 
 ;;; Core functionality
 
+(defun magnus--migrate-data-files ()
+  "Migrate data files from old locations to ~/.magnus/."
+  (let ((migrations
+         (list
+          (cons (expand-file-name "magnus-state.el" user-emacs-directory)
+                magnus-state-file)
+          (cons (expand-file-name "magnus-attention-data.el" user-emacs-directory)
+                magnus-attention-data-file)
+          ;; Also check ~/.claude/ (brief intermediate location)
+          (cons (expand-file-name ".claude/magnus-state.el" (getenv "HOME"))
+                magnus-state-file)
+          (cons (expand-file-name ".claude/magnus-attention-data.el" (getenv "HOME"))
+                magnus-attention-data-file))))
+    (dolist (pair migrations)
+      (let ((old (car pair))
+            (new (cdr pair)))
+        (when (and (file-exists-p old) (not (file-exists-p new)))
+          (make-directory (file-name-directory new) t)
+          (copy-file old new)
+          (message "Magnus: migrated %s to %s"
+                   (file-name-nondirectory old) new)))))
+  ;; Migrate context directory
+  (let ((old-context (expand-file-name "magnus-context" user-emacs-directory)))
+    (when (and (file-directory-p old-context)
+               (not (file-directory-p magnus-context-directory)))
+      (make-directory (file-name-directory magnus-context-directory) t)
+      (copy-directory old-context magnus-context-directory nil t t)
+      (message "Magnus: migrated context to %s" magnus-context-directory)))
+  ;; Migrate URL cache
+  (let ((old-cache (expand-file-name "magnus-url-cache" user-emacs-directory)))
+    (when (and (file-directory-p old-cache)
+               (not (file-directory-p magnus-context-cache-directory)))
+      (make-directory (file-name-directory magnus-context-cache-directory) t)
+      (copy-directory old-cache magnus-context-cache-directory nil t t)
+      (message "Magnus: migrated URL cache to %s"
+               magnus-context-cache-directory))))
+
 (defun magnus--ensure-initialized ()
   "Ensure magnus is initialized."
   (unless magnus--initialized
@@ -300,6 +351,7 @@ Returns (NAME . REASON) if a valid match was found, or nil."
     (require 'magnus-attention)
     (require 'magnus-health)
     (require 'magnus-chat)
+    (magnus--migrate-data-files)
     (magnus-persistence-load)
     (magnus-persistence--setup-autosave)
     (magnus-coord-ensure-watchers)
@@ -337,6 +389,62 @@ The agent runs to completion and exits."
   (interactive "sTask prompt: ")
   (magnus--ensure-initialized)
   (magnus-process-create-headless prompt directory name))
+
+;;; Upgrade
+
+(defvar magnus-persistence--save-timer)
+
+(defun magnus--shutdown ()
+  "Stop all Magnus timers, watchers, and hooks."
+  (magnus-coord-stop-reminders)
+  (magnus-health-stop)
+  (magnus-attention-stop)
+  (when magnus-persistence--save-timer
+    (cancel-timer magnus-persistence--save-timer)
+    (setq magnus-persistence--save-timer nil))
+  (setq magnus--initialized nil))
+
+(defun magnus--upgrade-execute ()
+  "Archive all agents, save state, and reinstall Magnus."
+  (let ((active (magnus-instances-active-list)))
+    (when active
+      (dolist (instance active)
+        (magnus-process-archive instance))
+      (message "Magnus: archived %d agent%s"
+               (length active)
+               (if (= (length active) 1) "" "s"))))
+  (magnus-persistence-save)
+  (magnus--shutdown)
+  (package-reinstall 'magnus)
+  (message "Magnus upgraded. Run M-x magnus to resurrect your agents."))
+
+;;;###autoload
+(defun magnus-upgrade ()
+  "Upgrade Magnus gracefully.
+Warns active agents, gives them 120 seconds to save their work,
+archives them, saves state, and reinstalls the package."
+  (interactive)
+  (magnus--ensure-initialized)
+  (let ((active (magnus-instances-active-list)))
+    (if (null active)
+        (progn
+          (message "No active agents. Upgrading now...")
+          (magnus-persistence-save)
+          (magnus--shutdown)
+          (package-reinstall 'magnus)
+          (message "Magnus upgraded. Run M-x magnus to start."))
+      ;; Warn agents
+      (dolist (instance active)
+        (magnus-coord-nudge-agent
+         instance
+         (concat "Magnus is upgrading in 2 minutes. Save your work and "
+                 "update your memory file now — write in first person, as "
+                 "yourself. This session will be archived and you can be "
+                 "resurrected after the upgrade.")))
+      (message "Magnus: warned %d agent%s. Upgrading in 120 seconds..."
+               (length active)
+               (if (= (length active) 1) "" "s"))
+      (run-with-timer 120 nil #'magnus--upgrade-execute))))
 
 (provide 'magnus)
 ;;; magnus.el ends here
