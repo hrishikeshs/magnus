@@ -359,7 +359,9 @@ Maps \\`keyboard-quit' to send ESC, since Emacs intercepts the real ESC key."
      process
      (lambda (proc _event)
        (unless (process-live-p proc)
-         (magnus-instances-update instance :status 'stopped)
+         ;; Don't overwrite 'purged status — archive sets it intentionally
+         (unless (eq (magnus-instance-status instance) 'purged)
+           (magnus-instances-update instance :status 'stopped))
          (when (get-buffer magnus-buffer-name)
            (magnus-status-refresh)))))))
 
