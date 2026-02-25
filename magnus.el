@@ -308,7 +308,7 @@ Includes --model flag only when `magnus-headless-model' is set."
 (defun magnus--run-match-sync (prompt)
   "Run `claude --print' synchronously with PROMPT.
 Returns the trimmed output string, or nil on error."
-  (condition-case nil
+  (condition-case err
       (when (and (bound-and-true-p magnus-claude-executable)
                  (executable-find magnus-claude-executable))
         (let ((process-environment
@@ -319,7 +319,8 @@ Returns the trimmed output string, or nil on error."
             (let ((cmd (magnus--headless-command prompt)))
               (apply #'call-process (car cmd) nil t nil (cdr cmd)))
             (string-trim (buffer-string)))))
-    (error nil)))
+    (error (message "Magnus: match sync error: %s" (error-message-string err))
+           nil)))
 
 (defun magnus--parse-match-output (output candidates)
   "Parse OUTPUT from a smart match call.
@@ -395,7 +396,7 @@ lowercase keywords, nothing else.\n\nMemory:\n%s" memory))
               (cl-remove-if
                (lambda (e) (string-prefix-p "CLAUDECODE=" e))
                process-environment)))
-        (condition-case nil
+        (condition-case err
             (let ((proc (make-process
                          :name (format "magnus-index-%s" name)
                          :command (magnus--headless-command prompt)
@@ -409,7 +410,8 @@ lowercase keywords, nothing else.\n\nMemory:\n%s" memory))
                                     directory name))))
               (when (process-live-p proc)
                 (process-send-eof proc)))
-          (error nil))))))
+          (error (message "Magnus: index update error for %s: %s"
+                          name (error-message-string err))))))))
 
 (defun magnus--agents-index-sentinel (directory name)
   "Return a process sentinel for indexing agent NAME in DIRECTORY."

@@ -154,7 +154,7 @@ Called from `kill-buffer-hook'."
 (defun magnus-context--get-project-dir ()
   "Get the current project directory."
   (or (when (fboundp 'project-current)
-        (when-let ((project (project-current)))
+        (when-let ((project (project-current 'maybe)))
           (project-root project)))
       default-directory))
 

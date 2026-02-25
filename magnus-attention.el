@@ -276,12 +276,6 @@ Also releases queued instances whose prompts have been handled."
 
 ;;; Auto-approval
 
-(defun magnus-attention--prompt-anchors ()
-  "Return the current prompt anchor patterns.
-Derived from `magnus-attention-patterns' so customizations are
-always reflected in auto-approval logic."
-  magnus-attention-patterns)
-
 (defun magnus-attention--try-auto-approve (instance)
   "Try to auto-approve INSTANCE's permission prompt.
 Only fires when the tail text looks like a genuine permission prompt
@@ -305,7 +299,7 @@ Sends `y' which maps to confirm:yes in all CC prompt formats."
   "Return non-nil if LINE looks like an actual yes/no permission prompt."
   (cl-some (lambda (pattern)
              (string-match-p pattern line))
-           (magnus-attention--prompt-anchors)))
+           magnus-attention-patterns))
 
 (defun magnus-attention--matches-auto-approve-p (prompt-text)
   "Return non-nil if PROMPT-TEXT matches an auto-approve pattern."

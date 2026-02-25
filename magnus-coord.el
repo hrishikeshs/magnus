@@ -18,7 +18,6 @@
 ;;; Code:
 
 (require 'magnus-instances)
-(require 'filenotify)
 
 (declare-function vterm-send-string "vterm")
 (declare-function project-root "project")
@@ -188,8 +187,9 @@ Debounced: only records if last visit was more than 30 seconds ago."
 
 (defun magnus-coord--adaptive-interval (agent-name)
   "Return adaptive nudge interval for AGENT-NAME in seconds.
-Agents visited frequently get longer intervals (less nudging).
-Agents rarely visited get shorter intervals (more nudging)."
+Matches the user's visiting rhythm.  Agents visited frequently
+get shorter intervals (matching the pace).  Agents rarely visited
+get longer intervals (up to the default)."
   (let* ((data (gethash agent-name magnus-coord--attention-data))
          (visits (plist-get data :visits))
          (default (or magnus-coord-reminder-interval 600)))
@@ -468,9 +468,11 @@ Warns agents approaching the context window limit."
   (when magnus-coord-context-warn-threshold
     (dolist (instance (magnus-instances-list))
       (when (eq (magnus-instance-status instance) 'running)
-        (condition-case nil
+        (condition-case err
             (magnus-coord--check-context-one instance)
-          (error nil))))))
+          (error (message "Magnus: context check error for %s: %s"
+                          (magnus-instance-name instance)
+                          (error-message-string err))))))))
 
 (defun magnus-coord--check-context-one (instance)
   "Check context utilization for INSTANCE and warn if needed."
@@ -699,7 +701,7 @@ Returns list of (agent-name . context-line) pairs."
                      (string= (magnus-instance-directory inst) directory)))
               (magnus-instances-list)))
 
-(defun magnus-coord--extract-sender-and-message (context-line _target-name)
+(defun magnus-coord--extract-sender-and-message (context-line)
   "Extract sender name and message from CONTEXT-LINE.
 Returns (sender . message) or nil."
   (when (string-match
@@ -712,8 +714,7 @@ Returns (sender . message) or nil."
 (defun magnus-coord--send-mention-notification (instance context-line)
   "Send a mention notification to INSTANCE with CONTEXT-LINE.
 Formats the message as a direct user instruction so Claude acts on it."
-  (let* ((name (magnus-instance-name instance))
-         (parsed (magnus-coord--extract-sender-and-message context-line name))
+  (let* ((parsed (magnus-coord--extract-sender-and-message context-line))
          (msg (if parsed
                   (format "%s (another agent) says: %s — Do this now. Log your acknowledgment and progress in .magnus-coord.md"
                           (car parsed) (cdr parsed))

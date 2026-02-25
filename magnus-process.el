@@ -14,6 +14,7 @@
 
 ;;; Code:
 
+(require 'filenotify)
 (require 'vterm)
 (require 'magnus-instances)
 (require 'magnus-coord)
@@ -507,9 +508,6 @@ Replaces slashes, spaces, and tildes with hyphens."
         (vterm-send-return))
       ;; Set up process sentinel
       (magnus-process--setup-sentinel instance buffer)
-      ;; Only send onboarding if no session (fresh start)
-      (unless session-id
-        (run-with-timer 5 nil #'magnus-process--send-onboarding instance))
       buffer)))
 
 ;;; Instance interaction
