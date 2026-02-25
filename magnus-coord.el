@@ -595,6 +595,9 @@ instances restored from persistence."
     (setq magnus-coord--poll-timer
           (run-with-timer 3 3 #'magnus-coord--poll-all))))
 
+(defvar magnus-coord--last-trim-time 0
+  "Timestamp of last log trim, for debouncing.")
+
 (defun magnus-coord--poll-all ()
   "Poll all watched coordination files for new mentions, DMs, and summons."
   (dolist (directory magnus-coord--watched-dirs)
@@ -612,7 +615,12 @@ instances restored from persistence."
               (when magnus-coord-mention-notify
                 (magnus-coord--check-new-mentions directory))
               (magnus-coord--check-new-dms directory)
-              (magnus-coord--check-new-summons directory))
+              (magnus-coord--check-new-summons directory)
+              ;; Trim logs every 3min when file is changing
+              (let ((now (float-time)))
+                (when (> (- now magnus-coord--last-trim-time) 180)
+                  (setq magnus-coord--last-trim-time now)
+                  (magnus-coord-trim-log directory))))
           (error
            (message "Magnus: coord poll error for %s: %s"
                     directory (error-message-string err))))))))
@@ -1105,10 +1113,10 @@ If no agents are running, shows the most recent saved retro."
     (insert "|-------|------|--------|-------|\n")
     (insert "\n## Discoveries\n\n")
     (insert "<!-- Share things you learned that other agents should know -->\n\n")
-    (insert "## Log\n\n")
-    (insert "<!-- Agents: Append messages here to communicate -->\n\n")
     (insert "## Decisions\n\n")
-    (insert "<!-- Record agreed-upon decisions here -->\n\n")))
+    (insert "<!-- Record agreed-upon decisions here -->\n\n")
+    (insert "## Log\n\n")
+    (insert "<!-- Agents: Append messages here to communicate -->\n\n")))
 
 (defun magnus-coord-ensure-instructions (directory)
   "Ensure agent instructions file exists in DIRECTORY."
