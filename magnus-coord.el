@@ -26,6 +26,44 @@
 (defvar magnus-claude-executable)
 (declare-function magnus--headless-command "magnus")
 
+;;; Vterm buffer activity tracking
+
+(defvar magnus-coord--buffer-ticks (make-hash-table :test 'equal)
+  "Hash: instance-id -> (TICK . FLOAT-TIME).
+TICK is the `buffer-modified-tick' last observed, FLOAT-TIME is when it changed.")
+
+(defcustom magnus-coord-quiescence-threshold 30
+  "Seconds of vterm buffer inactivity before an agent is considered idle.
+Only idle agents receive periodic nudges."
+  :type 'integer
+  :group 'magnus)
+
+(defun magnus-coord--update-buffer-ticks ()
+  "Update buffer activity timestamps for all running instances."
+  (dolist (instance (magnus-instances-list))
+    (when (eq (magnus-instance-status instance) 'running)
+      (let* ((id (magnus-instance-id instance))
+             (buffer (magnus-instance-buffer instance))
+             (prev (gethash id magnus-coord--buffer-ticks))
+             (prev-tick (car prev)))
+        (when (and buffer (buffer-live-p buffer))
+          (let ((tick (buffer-modified-tick buffer)))
+            (if (and prev-tick (= tick prev-tick))
+                ;; Tick unchanged — keep existing timestamp
+                nil
+              ;; Tick changed — record new tick + current time
+              (puthash id (cons tick (float-time))
+                       magnus-coord--buffer-ticks))))))))
+
+(defun magnus-coord-agent-quiescent-p (instance)
+  "Return non-nil if INSTANCE's vterm buffer has been quiet.
+Quiet means no output for `magnus-coord-quiescence-threshold' seconds."
+  (let* ((id (magnus-instance-id instance))
+         (entry (gethash id magnus-coord--buffer-ticks))
+         (last-change (cdr entry)))
+    (or (null last-change)
+        (> (- (float-time) last-change) magnus-coord-quiescence-threshold))))
+
 ;;; Customization
 
 (defcustom magnus-coord-file ".magnus-coord.md"
@@ -318,26 +356,24 @@ Agents keep working but are not poked."
 Agents create a busy file to tell Magnus to stop nudging them."
   (file-exists-p (magnus-process--agent-busy-path instance)))
 
-(declare-function magnus-chat-active-target-id "magnus-chat")
-
 (defun magnus-coord--send-reminders ()
   "Send a coordination reminder to idle instances.
-Skips agents that were recently contacted, are busy, or are the
-current chat target while the user is typing.
+Skips agents that were recently contacted, are busy, or whose
+vterm buffer is still active (not quiescent).
 Suppressed entirely when AFK, actively chatting, or DND is on."
+  ;; Always update buffer ticks so quiescence tracking stays current
+  (magnus-coord--update-buffer-ticks)
   (unless (or magnus-coord--user-idle-p
               (magnus-coord--user-active-p)
               magnus-coord--do-not-disturb)
     (let ((template (nth (mod magnus-coord--reminder-index
                               (length magnus-coord--reminder-templates))
-                         magnus-coord--reminder-templates))
-          (chat-target (and (fboundp 'magnus-chat-active-target-id)
-                            (magnus-chat-active-target-id))))
+                         magnus-coord--reminder-templates)))
       (dolist (instance (magnus-instances-list))
         (when (and (eq (magnus-instance-status instance) 'running)
                    (not (magnus-coord--recently-contacted-p instance))
                    (not (magnus-coord-agent-busy-p instance))
-                   (not (equal (magnus-instance-id instance) chat-target)))
+                   (magnus-coord-agent-quiescent-p instance))
           (magnus-coord-nudge-agent
            instance
            (format template (magnus-instance-name instance)))))
@@ -713,12 +749,12 @@ Returns (sender . message) or nil."
 
 (defun magnus-coord--send-mention-notification (instance context-line)
   "Send a mention notification to INSTANCE with CONTEXT-LINE.
-Formats the message as a direct user instruction so Claude acts on it."
+Delivers the message content without commanding the agent."
   (let* ((parsed (magnus-coord--extract-sender-and-message context-line))
          (msg (if parsed
-                  (format "%s (another agent) says: %s — Do this now. Log your acknowledgment and progress in .magnus-coord.md"
+                  (format "[From %s]: %s"
                           (car parsed) (cdr parsed))
-                (format "Another agent mentioned you in .magnus-coord.md: \"%s\" — Read the file, do what's asked, and log your progress there."
+                (format "[Mention in .magnus-coord.md]: %s"
                         context-line))))
     (magnus-coord-nudge-agent instance msg)))
 

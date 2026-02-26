@@ -28,7 +28,6 @@
 
 (defvar magnus-coord--do-not-disturb)
 (declare-function magnus-context "magnus-context")
-(declare-function magnus-chat "magnus-chat")
 
 ;; Defined in magnus.el
 (defvar magnus-buffer-name)
@@ -104,7 +103,6 @@
     (define-key map (kbd "S") #'magnus-status-resume)
     (define-key map (kbd "d") #'magnus-status-chdir)
     (define-key map (kbd "m") #'magnus-status-send-message)
-    (define-key map (kbd "M") #'magnus-chat)
     (define-key map (kbd "t") #'magnus-status-trace)
     (define-key map (kbd "g") #'magnus-status-refresh)
     (define-key map (kbd "x") #'magnus-status-context)
