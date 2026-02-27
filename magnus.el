@@ -564,7 +564,8 @@ archives them, saves state, and reinstalls the package."
          (concat "Magnus is upgrading in 2 minutes. Save your work and "
                  "update your memory file now — write in first person, as "
                  "yourself. This session will be archived and you can be "
-                 "resurrected after the upgrade.")))
+                 "resurrected after the upgrade.")
+         "Magnus"))
       (message "Magnus: warned %d agent%s. Upgrading in 120 seconds..."
                (length active)
                (if (= (length active) 1) "" "s"))

@@ -100,13 +100,6 @@ Older entries are trimmed automatically.  Set to nil to disable."
                  (const :tag "Unlimited" nil))
   :group 'magnus)
 
-(defcustom magnus-coord-active-cooldown 120
-  "Seconds after last chat message before nudges resume.
-When the user sends a message via the chat buffer, all
-coordination nudges are suppressed for this many seconds."
-  :type 'integer
-  :group 'magnus)
-
 (defcustom magnus-coord-idle-threshold 300
   "Seconds of inactivity before telling agents to sleep.
 When the user is idle for this long, a sleep message is sent to
@@ -144,13 +137,18 @@ This prevents partial reads when agents write concurrently."
 
 ;;; Sending messages to agents
 
-(defun magnus-coord-nudge-agent (instance message)
-  "Nudge INSTANCE by sending MESSAGE to its vterm buffer."
+(defun magnus-coord-nudge-agent (instance message &optional source)
+  "Nudge INSTANCE by sending MESSAGE to its vterm buffer.
+When SOURCE is non-nil, prepend \"[From SOURCE]:\" to distinguish
+system messages from user-typed input."
   (when-let ((buffer (magnus-instance-buffer instance)))
     (when (buffer-live-p buffer)
-      (with-current-buffer buffer
-        (vterm-send-string message)
-        (vterm-send-return)))))
+      (let ((text (if source
+                      (format "[From %s]: %s" source message)
+                    message)))
+        (with-current-buffer buffer
+          (vterm-send-string text)
+          (vterm-send-return))))))
 
 ;;; Periodic reminders
 
@@ -184,10 +182,6 @@ This prevents partial reads when agents write concurrently."
 (defvar magnus-coord--reminder-index 0
   "Index into the rotating reminder templates.")
 
-(defvar magnus-coord--last-contact (make-hash-table :test 'equal)
-  "Hash table: instance-id -> `float-time' of last user message.
-Agents contacted recently are skipped by periodic nudges.")
-
 ;;; Attention pattern learning
 
 (defvar magnus-coord--attention-data (make-hash-table :test 'equal)
@@ -213,15 +207,6 @@ Debounced: only records if last visit was more than 30 seconds ago."
                           (seq-take (cons (float-time) visits) 50))
                magnus-coord--attention-data)
       (magnus-coord--schedule-attention-save))))
-
-(defun magnus-coord--record-message (agent-name)
-  "Record that a chat message was sent to AGENT-NAME."
-  (let* ((data (or (gethash agent-name magnus-coord--attention-data)
-                   (list :visits nil :messages 0)))
-         (messages (or (plist-get data :messages) 0)))
-    (puthash agent-name
-             (plist-put data :messages (1+ messages))
-             magnus-coord--attention-data)))
 
 (defun magnus-coord--adaptive-interval (agent-name)
   "Return adaptive nudge interval for AGENT-NAME in seconds.
@@ -299,47 +284,13 @@ Compares time since last visit against twice the adaptive interval."
       (error
        (message "Magnus: failed to load attention data")))))
 
-;;; Contact recording
-
-(defun magnus-coord-record-contact (instance-id)
-  "Record that INSTANCE-ID was just contacted by the user.
-Suppresses periodic nudges for this agent until the next interval.
-Also updates attention pattern data."
-  (puthash instance-id (float-time) magnus-coord--last-contact)
-  (when-let ((instance (magnus-instances-get instance-id)))
-    (let ((name (magnus-instance-name instance)))
-      (magnus-coord--record-visit name)
-      (magnus-coord--record-message name))))
-
-(defun magnus-coord--recently-contacted-p (instance)
-  "Return non-nil if INSTANCE was contacted within its adaptive interval."
-  (let* ((id (magnus-instance-id instance))
-         (name (magnus-instance-name instance))
-         (last (gethash id magnus-coord--last-contact))
-         (interval (magnus-coord--adaptive-interval name)))
-    (and last (< (- (float-time) last) interval))))
-
 (defvar magnus-coord--user-idle-p nil
   "Non-nil when the user has been detected as AFK.
 Set by `magnus-coord--on-user-idle', cleared by `magnus-coord--on-user-return'.")
 
-(defvar magnus-coord--user-active-until 0
-  "Float-time until which the user is considered actively chatting.
-Nudges are suppressed while `float-time' is less than this value.")
-
 (defvar magnus-coord--do-not-disturb nil
   "Non-nil when do-not-disturb mode is active.
 All periodic nudges are suppressed.  Toggle with `magnus-coord-toggle-dnd'.")
-
-(defun magnus-coord-record-user-active ()
-  "Record that the user is actively chatting.
-Suppresses all nudges for `magnus-coord-active-cooldown' seconds."
-  (setq magnus-coord--user-active-until
-        (+ (float-time) magnus-coord-active-cooldown)))
-
-(defun magnus-coord--user-active-p ()
-  "Return non-nil if the user has been actively chatting recently."
-  (> magnus-coord--user-active-until (float-time)))
 
 (defun magnus-coord-toggle-dnd ()
   "Toggle do-not-disturb mode.
@@ -358,25 +309,21 @@ Agents create a busy file to tell Magnus to stop nudging them."
 
 (defun magnus-coord--send-reminders ()
   "Send a coordination reminder to idle instances.
-Skips agents that were recently contacted, are busy, or whose
-vterm buffer is still active (not quiescent).
-Suppressed entirely when AFK, actively chatting, or DND is on."
-  ;; Always update buffer ticks so quiescence tracking stays current
-  (magnus-coord--update-buffer-ticks)
+Skips agents that are busy or whose vterm buffer is still active.
+Suppressed entirely when AFK or DND is on."
   (unless (or magnus-coord--user-idle-p
-              (magnus-coord--user-active-p)
               magnus-coord--do-not-disturb)
     (let ((template (nth (mod magnus-coord--reminder-index
                               (length magnus-coord--reminder-templates))
                          magnus-coord--reminder-templates)))
       (dolist (instance (magnus-instances-list))
         (when (and (eq (magnus-instance-status instance) 'running)
-                   (not (magnus-coord--recently-contacted-p instance))
                    (not (magnus-coord-agent-busy-p instance))
                    (magnus-coord-agent-quiescent-p instance))
           (magnus-coord-nudge-agent
            instance
-           (format template (magnus-instance-name instance)))))
+           (format template (magnus-instance-name instance))
+           "Magnus")))
       (setq magnus-coord--reminder-index
             (1+ magnus-coord--reminder-index))))
   ;; Trim logs while we're at it (even when idle)
@@ -476,7 +423,8 @@ Tells agents to consolidate their memory and go to sleep."
         (magnus-coord-nudge-agent
          instance
          (format "The user is away. Before you sleep, update your memory file at %s — write down what matters from this session: key decisions, things you learned, gotchas, unfinished work, your relationships with other agents. This file persists across restarts — it's how future-you remembers. Then go to sleep and wait quietly."
-                 memory-rel)))))
+                 memory-rel)
+         "Magnus"))))
   (add-hook 'pre-command-hook #'magnus-coord--on-user-return))
 
 (defun magnus-coord--on-user-return ()
@@ -488,7 +436,8 @@ Sends a wake-up message to running agents and re-arms the idle timer."
     (when (eq (magnus-instance-status instance) 'running)
       (magnus-coord-nudge-agent
        instance
-       "The user is back! Resume normal operation — check .magnus-coord.md for any updates.")))
+       "The user is back! Resume normal operation — check .magnus-coord.md for any updates."
+       "Magnus")))
   ;; Re-arm the idle timer for the next AFK period
   (magnus-coord--start-idle-watch))
 
@@ -525,18 +474,19 @@ Warns agents approaching the context window limit."
               (magnus-coord-nudge-agent
                instance
                (format "Heads up: you're at %d%% context. Compaction is coming — write everything important to your memory file at %s NOW, while you still have full context. Key decisions, unfinished work, what you've learned, relationships with other agents. After compaction you'll lose detail."
-                       pct memory-rel)))))))))
+                       pct memory-rel)
+               "Magnus")))))))
 
 (defun magnus-coord--read-context-usage (instance)
   "Read the latest context token count from INSTANCE's session trace.
 Returns total input tokens or nil if unavailable.  Only reads the
-last 4KB of the file for efficiency."
+last 32KB of the file for efficiency."
   (when-let ((session-id (magnus-instance-session-id instance))
              (jsonl (magnus-process--session-jsonl-path
                      (magnus-instance-directory instance) session-id)))
     (let* ((attrs (file-attributes jsonl))
            (size (file-attribute-size attrs))
-           (start (max 0 (- size 4096))))
+           (start (max 0 (- size 32768))))
       (with-temp-buffer
         (insert-file-contents jsonl nil start size)
         (magnus-coord--parse-last-usage)))))
@@ -554,11 +504,11 @@ cache_read_input_tokens."
             (line-end (line-end-position)))
         ;; Extract the three token counts via regex (avoid full JSON parse)
         (let ((input (magnus-coord--extract-number
-                      "\"input_tokens\":\\s*\\([0-9]+\\)" line-start line-end))
+                      "\"input_tokens\":[[:space:]]*\\([0-9]+\\)" line-start line-end))
               (cache-create (magnus-coord--extract-number
-                             "\"cache_creation_input_tokens\":\\s*\\([0-9]+\\)" line-start line-end))
+                             "\"cache_creation_input_tokens\":[[:space:]]*\\([0-9]+\\)" line-start line-end))
               (cache-read (magnus-coord--extract-number
-                           "\"cache_read_input_tokens\":\\s*\\([0-9]+\\)" line-start line-end)))
+                           "\"cache_read_input_tokens\":[[:space:]]*\\([0-9]+\\)" line-start line-end)))
           (when (and input cache-read)
             (setq found (+ input (or cache-create 0) cache-read))))))
     found))
@@ -637,7 +587,9 @@ instances restored from persistence."
   "Timestamp of last log trim, for debouncing.")
 
 (defun magnus-coord--poll-all ()
-  "Poll all watched coordination files for new mentions, DMs, and summons."
+  "Poll all watched coordination files for new mentions, DMs, and summons.
+Also updates vterm buffer activity ticks for quiescence tracking."
+  (magnus-coord--update-buffer-ticks)
   (dolist (directory magnus-coord--watched-dirs)
     (let* ((file (magnus-coord-file-path directory))
            (mtime (and (file-exists-p file)
@@ -908,12 +860,15 @@ SUMMON is (target-name sender reason)."
         (magnus-coord-nudge-agent
          requester
          (format "%s is already online — @mention them in .magnus-coord.md instead."
-                 target)))))))
+                 target)
+         "Magnus")))))))
 
 (defun magnus-coord--execute-summon (directory target sender reason)
   "Execute a summon of TARGET in DIRECTORY, requested by SENDER for REASON."
-  (let ((magnus--summon-context (list :sender sender :reason reason)))
-    (magnus-process-create directory target))
+  (setq magnus--summon-context (list :sender sender :reason reason))
+  (unwind-protect
+      (magnus-process-create directory target)
+    (setq magnus--summon-context nil))
   (magnus-coord-add-log directory "Magnus"
                          (format "Summoned %s (requested by %s: %s)"
                                  target sender reason)))
