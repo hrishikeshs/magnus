@@ -19,7 +19,7 @@ jobs:
         with:
           version: ${{ matrix.emacs-version }}
 
-      - name: Install vterm
+      - name: Install dependencies
         run: |
           emacs --batch --eval '
             (progn
@@ -28,7 +28,8 @@ jobs:
                            (cons "melpa" "https://melpa.org/packages/") t)
               (package-initialize)
               (package-refresh-contents)
-              (package-install (quote vterm)))'
+              (package-install (quote vterm))
+              (package-install (quote transient)))'
 
       - name: Lint
         run: make lint-compile

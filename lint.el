@@ -14,7 +14,12 @@
     (while args
       (let ((arg (pop args)))
         (cond
-         ((string= arg "--compile") (setq lint-do-compile t))
+         ((string= arg "--compile")
+          (setq lint-do-compile t)
+          ;; Initialize package.el so installed deps (vterm, transient)
+          ;; are on the load-path for byte-compilation.
+          (require 'package)
+          (package-initialize))
          ((string-suffix-p ".el" arg) (push arg files)))))
     (setq command-line-args-left nil)
     (nreverse files)))
@@ -46,14 +51,18 @@
       (forward-line 1))))
 
 (defun lint-check-patterns (file)
-  "Check for banned patterns in FILE."
+  "Check for banned patterns in FILE.
+Only flags matches in actual code, not inside strings or comments."
   (with-temp-buffer
     (insert-file-contents file)
+    (emacs-lisp-mode)
     (goto-char (point-min))
     (while (re-search-forward "(error nil)" nil t)
-      (message "FAIL pattern: %s:%d: (error nil) — log errors instead"
-               file (line-number-at-pos))
-      (setq lint-ok nil))))
+      (let ((state (syntax-ppss)))
+        (unless (or (nth 3 state) (nth 4 state))
+          (message "FAIL pattern: %s:%d: (error nil) — log errors instead"
+                   file (line-number-at-pos))
+          (setq lint-ok nil))))))
 
 (defun lint-byte-compile (file)
   "Byte-compile FILE, treating errors as failures."
@@ -64,12 +73,9 @@
 (defun lint-run ()
   "Run all lint checks on files from command line."
   (let ((files (lint-files)))
-    (setq files (cl-remove-if
-                  (lambda (f) (string= (file-name-nondirectory f) "lint.el"))
-                  files))
     (unless files
-      (message "No files to lint (lint.el excluded).")
-      (kill-emacs 0))
+      (message "No .el files specified.")
+      (kill-emacs 1))
     (message "Linting %d file(s)..." (length files))
     (dolist (file files)
       (lint-check-parens file)
