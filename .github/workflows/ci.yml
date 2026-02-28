@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        emacs-version: ['28.1', '29.1']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: purcell/setup-emacs@master
+        with:
+          version: ${{ matrix.emacs-version }}
+
+      - name: Install vterm
+        run: |
+          emacs --batch --eval '
+            (progn
+              (require (quote package))
+              (add-to-list (quote package-archives)
+                           (cons "melpa" "https://melpa.org/packages/") t)
+              (package-initialize)
+              (package-refresh-contents)
+              (package-install (quote vterm)))'
+
+      - name: Lint
+        run: make lint VTERM_FILES=""
