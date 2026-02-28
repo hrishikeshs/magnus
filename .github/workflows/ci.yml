@@ -19,17 +19,5 @@ jobs:
         with:
           version: ${{ matrix.emacs-version }}
 
-      - name: Install dependencies
-        run: |
-          emacs --batch --eval '
-            (progn
-              (require (quote package))
-              (add-to-list (quote package-archives)
-                           (cons "melpa" "https://melpa.org/packages/") t)
-              (package-initialize)
-              (package-refresh-contents)
-              (package-install (quote vterm))
-              (package-install (quote transient)))'
-
       - name: Lint
-        run: make lint-compile
+        run: make lint
