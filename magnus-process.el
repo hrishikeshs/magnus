@@ -678,11 +678,14 @@ PARTIAL is the incomplete line from previous call.  Returns new partial."
     (dolist (line complete-lines)
       (when (and (not (string-empty-p line))
                  (string-prefix-p "{" (string-trim line)))
-        (condition-case nil
+        (condition-case err
             (let* ((json (json-parse-string (string-trim line) :object-type 'alist))
                    (type (alist-get 'type json)))
               (magnus-process--headless-handle-event instance proc json type))
-          (error nil))))
+          (error
+           (message "Magnus: headless event error for %s: %s"
+                    (magnus-instance-name instance)
+                    (error-message-string err))))))
     remainder))
 
 (defun magnus-process--headless-handle-event (instance proc json type)

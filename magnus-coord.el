@@ -892,13 +892,15 @@ SUMMON is (target-name sender reason)."
   (let ((default-directory directory)
         (since (format-time-string "%Y-%m-%dT%H:%M:%S"
                                    (seconds-to-time since-time))))
-    (condition-case nil
+    (condition-case err
         (with-temp-buffer
           (call-process "git" nil t nil
                         "log" "--oneline" (format "--since=%s" since))
           (let ((output (string-trim (buffer-string))))
             (if (string-empty-p output) "No commits" output)))
-      (error "No git data"))))
+      (error
+       (message "Magnus: git log failed: %s" (error-message-string err))
+       "No git data"))))
 
 (defun magnus-coord--collect-retro-data (directory)
   "Collect session data for a retrospective in DIRECTORY.
