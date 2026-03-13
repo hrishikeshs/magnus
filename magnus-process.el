@@ -488,9 +488,9 @@ Kills the current process and respawns in the new directory."
 
 (defun magnus-process--project-hash (directory)
   "Convert DIRECTORY to Claude's project hash format.
-Replaces slashes, spaces, and tildes with hyphens."
+Replaces slashes, spaces, tildes, and underscores with hyphens."
   (let ((path (directory-file-name (expand-file-name directory))))
-    (replace-regexp-in-string "[/ ~]+" "-" path)))
+    (replace-regexp-in-string "[/ ~_]+" "-" path)))
 
 (defun magnus-process--spawn-with-session (instance &optional session-id)
   "Spawn a Claude Code process for INSTANCE, optionally resuming SESSION-ID."
