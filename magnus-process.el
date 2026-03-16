@@ -521,13 +521,24 @@ Replaces slashes, spaces, tildes, and underscores with hyphens."
 ;;; Instance interaction
 
 (defun magnus-process-switch-to (instance)
-  "Switch to the buffer for INSTANCE."
-  (when-let ((buffer (magnus-instance-buffer instance)))
-    (if (buffer-live-p buffer)
-        (switch-to-buffer buffer)
-      ;; Buffer is dead, respawn
-      (magnus-process--spawn instance)
-      (switch-to-buffer (magnus-instance-buffer instance)))))
+  "Switch to the buffer for INSTANCE.
+If the buffer is nil (e.g. after Emacs restart), resume the session
+if a session ID exists, or spawn a fresh process."
+  (let ((buffer (magnus-instance-buffer instance)))
+    (cond
+     ;; Buffer exists and is live — switch to it
+     ((and buffer (buffer-live-p buffer))
+      (switch-to-buffer buffer))
+     ;; Buffer is dead or nil — need to (re)spawn
+     (t
+      (if-let ((session-id (magnus-instance-session-id instance)))
+          ;; Has a session — resume it
+          (progn
+            (magnus-process--spawn-with-session instance session-id)
+            (switch-to-buffer (magnus-instance-buffer instance)))
+        ;; No session — spawn fresh
+        (magnus-process--spawn instance)
+        (switch-to-buffer (magnus-instance-buffer instance)))))))
 
 (defun magnus-process-running-p (instance)
   "Return non-nil if INSTANCE has a running process."

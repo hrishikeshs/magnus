@@ -53,16 +53,21 @@
 
 (defun magnus-persistence--try-reconnect (instance)
   "Try to reconnect INSTANCE to a running Claude process.
-This is a best-effort operation that looks for existing vterm buffers."
+This is a best-effort operation that looks for existing vterm buffers.
+If reconnection fails and the persisted status was running, corrects
+it to stopped so the UI doesn't lie."
   (let* ((name (magnus-instance-name instance))
          (buffer-name (format "*claude:%s*" name))
          (buffer (get-buffer buffer-name)))
-    (when (and buffer (buffer-live-p buffer))
-      ;; Found an existing buffer, check if process is running
-      (when (get-buffer-process buffer)
-        (magnus-instances-update instance
-                                 :buffer buffer
-                                 :status 'running)))))
+    (if (and buffer (buffer-live-p buffer))
+        ;; Found an existing buffer, check if process is running
+        (when (get-buffer-process buffer)
+          (magnus-instances-update instance
+                                   :buffer buffer
+                                   :status 'running))
+      ;; No buffer found — correct stale running status
+      (when (eq (magnus-instance-status instance) 'running)
+        (magnus-instances-update instance :status 'stopped)))))
 
 ;;; Auto-save hooks
 
