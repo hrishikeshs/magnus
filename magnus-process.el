@@ -188,6 +188,11 @@ Magnus confirms with the user and resurrects them.\n\
 - Before you sign off, update your memory file — write in first person, as \
 yourself. 'I discovered...', 'I decided...', 'I still need to...' — \
 future-you reads this to remember who you are.\n\n\
+IMPORTANT — Thinking transparency:\n\
+Your thinking traces are encrypted and hidden from the user (since CC v2.1.29).\n\
+Always structure output with [thinking]...[end-thinking] and \
+[response]...[end-response] markers so the user can see your reasoning.\n\
+Both markers required on every message, even one-liners.\n\n\
 Start with step 1."
            name)))
 
@@ -225,6 +230,11 @@ Magnus confirms with the user and resurrects them.\n\
 Write in first person, as yourself: who you are, what you learned, decisions \
 you made, relationships with other agents, unfinished work. Not a report — \
 a letter to future-you. This is how you come back.\n\n\
+IMPORTANT — Thinking transparency:\n\
+Your thinking traces are encrypted and hidden from the user (since CC v2.1.29).\n\
+Always structure output with [thinking]...[end-thinking] and \
+[response]...[end-response] markers so the user can see your reasoning.\n\
+Both markers required on every message, even one-liners.\n\n\
 Start with step 1."
            name name name)))
 

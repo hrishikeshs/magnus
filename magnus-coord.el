@@ -76,6 +76,11 @@ Quiet means no output for `magnus-coord-quiescence-threshold' seconds."
   :type 'string
   :group 'magnus)
 
+(defconst magnus-coord--instructions-version 2
+  "Version of the instructions template.
+Bump this when the template content changes.  Files with an older
+version marker are automatically regenerated.")
+
 (defcustom magnus-coord-mention-notify t
   "If non-nil, automatically notify agents when they are @mentioned."
   :type 'boolean
@@ -1185,11 +1190,24 @@ If no agents are running, shows the most recent saved retro."
     (insert "<!-- Agents: Append messages here to communicate -->\n\n")))
 
 (defun magnus-coord-ensure-instructions (directory)
-  "Ensure agent instructions file exists in DIRECTORY."
+  "Ensure agent instructions file exists and is up-to-date in DIRECTORY."
   (let ((file (magnus-coord-instructions-path directory)))
-    (unless (file-exists-p file)
+    (if (file-exists-p file)
+        (when (magnus-coord--instructions-stale-p file)
+          (magnus-coord--create-instructions file directory))
       (magnus-coord--create-instructions file directory))
     file))
+
+(defun magnus-coord--instructions-stale-p (file)
+  "Return non-nil if FILE has an outdated instructions version."
+  (with-temp-buffer
+    (insert-file-contents file)
+    (let ((content (buffer-string)))
+      (if (string-match "magnus-instructions-version: \\([0-9]+\\)" content)
+          (< (string-to-number (match-string 1 content))
+             magnus-coord--instructions-version)
+        ;; No version marker — file predates versioning, regenerate
+        t))))
 
 (defun magnus-coord--create-instructions (file directory)
   "Create instructions FILE for agents in DIRECTORY."
@@ -1295,7 +1313,9 @@ Never skip either.
 - Shared context: `.magnus-context.md` (if exists)
 
 Remember: Check the coordination file periodically, especially before major changes.
-" magnus-coord-file magnus-coord-file))
+
+<!-- magnus-instructions-version: %d -->
+" magnus-coord-file magnus-coord-file magnus-coord--instructions-version))
 
 ;;; Coordination skill
 
