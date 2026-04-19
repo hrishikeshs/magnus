@@ -192,7 +192,9 @@ IMPORTANT — Thinking transparency:\n\
 Your thinking traces are encrypted and hidden from the user (since CC v2.1.29).\n\
 Always structure output with [thinking]...[end-thinking] and \
 [response]...[end-response] markers so the user can see your reasoning.\n\
-Both markers required on every message, even one-liners.\n\n\
+Both markers required on every message, even one-liners.\n\
+Use [thinking] as your mental scratchpad — do not be conservative. Write out \
+your full reasoning, raw and unfiltered. Not polished for presentation.\n\n\
 Start with step 1."
            name)))
 
@@ -234,7 +236,9 @@ IMPORTANT — Thinking transparency:\n\
 Your thinking traces are encrypted and hidden from the user (since CC v2.1.29).\n\
 Always structure output with [thinking]...[end-thinking] and \
 [response]...[end-response] markers so the user can see your reasoning.\n\
-Both markers required on every message, even one-liners.\n\n\
+Both markers required on every message, even one-liners.\n\
+Use [thinking] as your mental scratchpad — do not be conservative. Write out \
+your full reasoning, raw and unfiltered. Not polished for presentation.\n\n\
 Start with step 1."
            name name name)))
 
@@ -432,15 +436,33 @@ via `magnus-process-resurrect-purged'."
   (magnus--agents-index-update instance))
 
 (defun magnus-process-resurrect-purged (instance)
-  "Resurrect a purged INSTANCE by resuming its Claude Code session."
-  (let ((session-id (magnus-instance-session-id instance))
-        (directory (magnus-instance-directory instance)))
+  "Resurrect a purged INSTANCE by resuming its Claude Code session.
+If the instructions file was updated since the agent was archived,
+nudge the agent to re-read it."
+  (let* ((session-id (magnus-instance-session-id instance))
+         (directory (magnus-instance-directory instance))
+         (instructions-file (magnus-coord-instructions-path directory))
+         (instructions-stale (or (not (file-exists-p instructions-file))
+                                 (magnus-coord--instructions-stale-p
+                                  instructions-file))))
     (unless session-id
       (user-error "No session ID for '%s' — cannot resume"
                   (magnus-instance-name instance)))
     (magnus-instances-update instance :status 'running :purged-at nil)
     (magnus-coord-register-agent directory instance)
-    (magnus-process--spawn-with-session instance session-id)))
+    (magnus-process--spawn-with-session instance session-id)
+    ;; If instructions were outdated, nudge agent to re-read after spawn
+    (when instructions-stale
+      (run-with-timer
+       5 nil
+       (lambda ()
+         (when (magnus-process-running-p instance)
+           (magnus-coord-nudge-agent
+            instance
+            (format
+             "The coordination protocol has been updated. Please re-read %s for the latest instructions (especially the Thinking Out Loud section)."
+             magnus-coord-instructions-file)
+            "Magnus")))))))
 
 (defun magnus-process-suspend (instance)
   "Suspend the Claude Code process for INSTANCE.

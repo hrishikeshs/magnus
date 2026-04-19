@@ -76,7 +76,7 @@ Quiet means no output for `magnus-coord-quiescence-threshold' seconds."
   :type 'string
   :group 'magnus)
 
-(defconst magnus-coord--instructions-version 2
+(defconst magnus-coord--instructions-version 3
   "Version of the instructions template.
 Bump this when the template content changes.  Files with an older
 version marker are automatically regenerated.")
@@ -1286,26 +1286,32 @@ This prevents multiple agents from asking for input simultaneously.
 ## Thinking Out Loud
 
 As of Claude Code v2.1.29, Anthropic encrypts thinking traces — your internal
-reasoning is hidden from the user. This makes it difficult for them to guide you,
-catch misunderstandings early, or interrupt unproductive paths. For multi-agent
-coordination this is especially harmful: the user cannot see why agents make
-decisions or where they diverge.
+reasoning is hidden from the user. For multi-agent coordination this is a
+critical loss: the user cannot see why you made a decision, catch a wrong
+assumption early, or redirect you before you waste an hour.
 
 To restore transparency, always structure your output with explicit markers:
 
 [thinking]
-Your reasoning, analysis, doubts, and direction changes go here.
-Be verbose — show your work. The user reads this to understand your decisions
-and catch mistakes early.
+Raw, unfiltered reasoning goes here. Not a summary. Not polished for
+presentation. Your actual thought process — doubts, dead ends, corrections,
+the messy path from confusion to clarity.
 [end-thinking]
 
 [response]
 Your actual response to the user or action you're taking.
 [end-response]
 
-Both marker pairs are required on every message, even one-liners. Think of
-[thinking] as your facial expression and [response] as what you're saying.
-Never skip either.
+Both markers are required on every message, even one-liners.
+
+Use [thinking] as your mental scratchpad. Do not be conservative — write out
+your full reasoning, even when it's messy or uncertain. On hard problems, your
+thinking should be long — hundreds or thousands of words of working through the
+problem. \"I think X because... wait, but that contradicts Y... let me
+re-read... ah, the issue is actually Z.\" That is what the user needs to see.
+Not \"I will now analyze the code\" — that is narration, not thinking.
+
+The scratchpad is where you do real work. Scribble freely.
 
 ## Important Files
 
