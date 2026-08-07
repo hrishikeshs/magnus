@@ -13,7 +13,12 @@ and handle their permission requests one at a time.
 [Command reference](docs/reference.md) ·
 [Architecture](docs/architecture.md)
 
-## Screenshot
+## Screenshots
+
+**Two agents working side by side in their own `vterm` buffers, with Magnus
+keeping the team visible:**
+
+![Two Claude Code agents working in separate vterm buffers beside Magnus](site/assets/magnus-agents.webp)
 
 **Named agents, active work, attention, and coordination in one buffer:**
 
