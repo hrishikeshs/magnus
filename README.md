@@ -277,9 +277,14 @@ coordination, persistence, trust boundaries, and review publication.
 
 ## Development
 
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the contributor workflow. Short version (matches CI):
+
 ```sh
+emacs --batch -Q -l test/install-ci-dependencies.el
 make test
 make lint
+make lint-compile
+make package-lint
 ```
 
 ## License
