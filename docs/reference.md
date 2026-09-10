@@ -11,6 +11,7 @@ These commands are bound directly in `*magnus*`:
 |-----|--------|
 | `RET` | Visit the agent or review at point |
 | `c` | Create a Claude Code agent |
+| `X` | Create a Codex agent |
 | `v` | Request a review, or show actions for the review at point |
 | `V` | Show actions for the review at point |
 | `k` | Archive an agent |
@@ -36,7 +37,6 @@ The `?` dispatcher additionally exposes:
 | Key | Action |
 |-----|--------|
 | `c` | Create a Claude Code agent |
-| `X` | Create a Codex agent |
 | `h` | Create a headless Claude task |
 | `o` | Open the completed review at point |
 | `D` | Run `magnus-doctor` |
