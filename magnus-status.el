@@ -29,6 +29,8 @@
 (declare-function magnus-dispatch "magnus-transient")
 (declare-function magnus-review-request-dispatch "magnus-transient")
 (declare-function magnus-review-actions "magnus-transient")
+(autoload 'magnus-transient-create-codex "magnus-transient"
+  "Create a Codex agent in the selected status row's project." t)
 (declare-function magnus-review-ui-open "magnus-review-ui")
 (declare-function magnus-review-controller-candidate-round
                   "magnus-review-controller" (review))
@@ -230,9 +232,44 @@ truthful.  CALLBACK is accepted for ElDoc's documentation-function protocol."
                (concat
                 "Magnus — \\[magnus-status-next]/"
                 "\\[magnus-status-previous] navigate · "
-               "\\[magnus-status-create] create agent · "
-               "\\[magnus-dispatch] all actions")))))
+                "\\[magnus-status-create] create Claude · "
+                "\\[magnus-transient-create-codex] create Codex · "
+                "\\[magnus-dispatch] all actions")))))
       (substitute-command-keys hint))))
+
+(defun magnus-status--selection-error (target action)
+  "Explain that point must be on TARGET to perform ACTION.
+Signal an actionable `user-error' that follows the active navigation
+bindings, so custom keymaps do not make the guidance stale."
+  (user-error
+   "Put point on %s to %s; use %s to select one, then retry"
+   target action
+   (substitute-command-keys
+    "\\[magnus-status-next]/\\[magnus-status-previous]")))
+
+(defun magnus-status-explain-unavailable-key ()
+  "Explain an unbound printable key in the status buffer.
+Magnus inherits `special-mode', where an unbound printable key normally
+reports only that it is undefined.  Name the selected entity and direct the
+user to its actions instead."
+  (interactive)
+  (let* ((description (key-description (this-command-keys-vector)))
+         (key (if (string-empty-p description) "That key" description))
+         (actions (substitute-command-keys "\\[magnus-dispatch]")))
+    (cond
+     ((magnus-status--get-instance-at-point)
+      (user-error "%s is not available for this agent; press %s for its actions"
+                  key actions))
+     ((magnus-status--get-review-at-point)
+      (user-error "%s is not available for this review; press %s for its actions"
+                  key actions))
+     (t
+      (user-error
+       "%s is not available here; use %s to select an agent or review, or press %s for all actions"
+       key
+       (substitute-command-keys
+        "\\[magnus-status-next]/\\[magnus-status-previous]")
+       actions)))))
 
 ;;; Mode definition
 
@@ -240,6 +277,7 @@ truthful.  CALLBACK is accepted for ElDoc's documentation-function protocol."
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "RET") #'magnus-status-visit)
     (define-key map (kbd "c") #'magnus-status-create)
+    (define-key map (kbd "X") #'magnus-transient-create-codex)
     (define-key map (kbd "k") #'magnus-status-archive)
     (define-key map (kbd "r") #'magnus-status-rename)
     (define-key map (kbd "R") #'magnus-status-resurrect-purged)
@@ -262,6 +300,11 @@ truthful.  CALLBACK is accepted for ElDoc's documentation-function protocol."
     (define-key map (kbd "F") #'magnus-retro)
     (define-key map (kbd "?") #'magnus-dispatch)
     (define-key map (kbd "q") #'quit-window)
+    ;; `special-mode' remaps otherwise unbound printable keys to `undefined'.
+    ;; Replace only that self-insertion fallback; explicit Magnus bindings,
+    ;; navigation keys, prefixes, and user overrides continue to win.
+    (define-key map [remap self-insert-command]
+                #'magnus-status-explain-unavailable-key)
     map)
   "Keymap for `magnus-status-mode'.")
 
@@ -471,7 +514,7 @@ truthful.  CALLBACK is accepted for ElDoc's documentation-function protocol."
           (progn
             (insert (propertize "  No active instances.\n"
                                 'face 'magnus-status-empty-hint))
-            (insert (propertize "  Press 'c' to create one, or 'R' to resurrect.\n"
+            (insert (propertize "  Press 'c' for Claude, 'X' for Codex, or 'R' to resurrect.\n"
                                 'face 'magnus-status-empty-hint)))
         (dolist (instance instances)
           (magnus-status--insert-instance instance))))))
@@ -481,7 +524,8 @@ truthful.  CALLBACK is accepted for ElDoc's documentation-function protocol."
   (insert "\n")
   (insert (propertize "  No agent instances.\n"
                       'face 'magnus-status-empty-hint))
-  (insert (propertize "  Press 'c' to create one.\n" 'face 'magnus-status-empty-hint)))
+  (insert (propertize "  Press 'c' for Claude or 'X' for Codex.\n"
+                      'face 'magnus-status-empty-hint)))
 
 (defun magnus-status--insert-reviews ()
   "Insert review lineages after the instance list."
@@ -975,7 +1019,8 @@ ephemeral round and COMPLETED is the latest successful round."
       (magnus-review-ui-open review round)))
    ((magnus-status--get-instance-at-point)
     (magnus-process-switch-to (magnus-status--get-instance-at-point)))
-   (t (user-error "No instance or review at point"))))
+   (t (magnus-status--selection-error
+       "an agent or review row" "visit it"))))
 
 (defvar magnus--creation-task)
 
@@ -1011,7 +1056,7 @@ Stops the process but preserves the session ID for later resurrection."
           (magnus-status-refresh)
           (message "Archived '%s' — resurrect with R"
                    (magnus-instance-name instance))))
-    (user-error "No instance at point")))
+    (magnus-status--selection-error "an agent row" "archive it")))
 
 (defun magnus-status-resurrect-purged ()
   "Resurrect the purged instance at point."
@@ -1024,7 +1069,8 @@ Stops the process but preserves the session ID for later resurrection."
             (message "Resurrected '%s'" (magnus-instance-name instance)))
         (user-error "Instance '%s' is not archived"
                     (magnus-instance-name instance)))
-    (user-error "No instance at point")))
+    (magnus-status--selection-error
+     "an archived agent row" "resurrect it")))
 
 (defun magnus-status--rename-archived-instance (instance new-name)
   "Transactionally rename archived INSTANCE to NEW-NAME.
@@ -1106,7 +1152,8 @@ If either the registry notification or home migration fails, restore both."
             (magnus-status--rename-archived-instance instance new-name)
             (magnus-status-refresh)
             (message "Renamed '%s' to '%s'" old-name new-name))))
-    (user-error "No instance at point")))
+    (magnus-status--selection-error
+     "an archived agent row" "rename it")))
 
 (defun magnus-status-context ()
   "Open the shared context buffer for the current project."
@@ -1136,7 +1183,7 @@ If either the registry notification or home migration fails, restore both."
                      (magnus-instance-name instance))
         (magnus-process-suspend instance)
         (magnus-status-refresh))
-    (user-error "No instance at point")))
+    (magnus-status--selection-error "an agent row" "suspend it")))
 
 (defun magnus-status-resume ()
   "Resume the instance at point."
@@ -1148,14 +1195,15 @@ If either the registry notification or home migration fails, restore both."
             (magnus-status-refresh))
         (user-error "Instance '%s' is not suspended"
                    (magnus-instance-name instance)))
-    (user-error "No instance at point")))
+    (magnus-status--selection-error "an agent row" "resume it")))
 
 (defun magnus-status-trace ()
   "Open the thinking trace for the instance at point."
   (interactive)
   (if-let ((instance (magnus-status--get-instance-at-point)))
       (magnus-process-trace instance)
-    (user-error "No instance at point")))
+    (magnus-status--selection-error
+     "an agent row" "open its thinking trace")))
 
 (defun magnus-status-send-message ()
   "Send a message to the instance at point."
@@ -1166,7 +1214,7 @@ If either the registry notification or home migration fails, restore both."
         (unless (string-empty-p msg)
           (magnus-coord-nudge-agent instance msg)
           (message "Sent to %s" (magnus-instance-name instance))))
-    (user-error "No instance at point")))
+    (magnus-status--selection-error "an agent row" "send it a message")))
 
 (defun magnus-status-chdir ()
   "Change the working directory of the instance at point."
@@ -1175,7 +1223,8 @@ If either the registry notification or home migration fails, restore both."
       (let* ((new-dir (read-directory-name "New directory: " nil nil t)))
         (magnus-process-chdir instance new-dir)
         (magnus-status-refresh))
-    (user-error "No instance at point")))
+    (magnus-status--selection-error
+     "an agent row" "change its working directory")))
 
 (defun magnus-status-archive-all ()
   "Archive all active instances."

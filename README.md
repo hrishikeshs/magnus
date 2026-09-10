@@ -180,7 +180,7 @@ installation, provider setup, upgrades, and `M-x magnus-doctor`.
 ## Quick start
 
 1. Run `M-x magnus`.
-2. Press `c` for Claude Code, or press `?` and then `X` for Codex.
+2. Press `c` for Claude Code, or `X` for Codex.
 3. Choose a Git project and work in the native TUI that opens.
 4. Return to `*magnus*` and create another agent when the work benefits from a
    second pair of hands.

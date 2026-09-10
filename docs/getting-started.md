@@ -107,7 +107,7 @@ Doctor is also available as `? D` from the Magnus status buffer.
 Run `M-x magnus` to open `*magnus*`.
 
 - Press `c` to create a Claude Code agent.
-- Press `?`, then `X`, to create a Codex agent.
+- Press `X` to create a Codex agent.
 - Press `RET` on an agent to visit its terminal.
 - Press `?` anywhere in the status buffer to see the complete dispatcher.
 

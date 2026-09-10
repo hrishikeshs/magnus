@@ -35,6 +35,8 @@
 (declare-function magnus-process-create-headless "magnus-process")
 (declare-function magnus-project-root "magnus")
 (declare-function magnus-status--get-review-at-point "magnus-status")
+(declare-function magnus-status--selection-error "magnus-status"
+                  (target action))
 (declare-function magnus-review-ui-open "magnus-review-ui")
 
 ;; Source checkouts do not have package-generated autoloads.  Keep Doctor lazy
@@ -126,7 +128,8 @@ review actions."
       (magnus-review-actions review)
     (let ((author
            (or (magnus-status--get-instance-at-point)
-               (user-error "Put point on an agent or review first"))))
+               (magnus-status--selection-error
+                "an agent or review row" "request or manage a review"))))
       (setq magnus-transient--review-request-context
             (magnus-review-request-context author))
       (transient-setup #'magnus-review-request-menu))))
@@ -321,7 +324,8 @@ When called from the status buffer, use the review at point."
   (interactive)
   (setq review
         (or review (magnus-status--get-review-at-point)
-            (user-error "Put point on a review first")))
+            (magnus-status--selection-error
+             "a review row" "open its actions")))
   (setq magnus-transient--review-action-context
         (magnus-transient--make-review-action-context review round))
   (transient-setup #'magnus-review-actions-menu))
@@ -353,7 +357,8 @@ When called from the status buffer, use the review at point."
   "Return the review selected by transient context or status point."
   (if (derived-mode-p 'magnus-status-mode)
       (or (magnus-status--get-review-at-point)
-          (user-error "Put point on a review first"))
+          (magnus-status--selection-error
+           "a review row" "open or modify it"))
     (magnus-transient--review-action-review)))
 
 (defun magnus-transient--review-for-mutation ()
