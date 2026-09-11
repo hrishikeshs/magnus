@@ -46,6 +46,7 @@
 ;; Key bindings in magnus buffer:
 ;;   RET - Visit instance or review
 ;;   c   - Create a Claude Code instance
+;;   X   - Create a Codex instance
 ;;   k   - Archive instance
 ;;   r   - Rename instance
 ;;   v   - Request an independent review

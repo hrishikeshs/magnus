@@ -80,6 +80,54 @@ ARGUMENTS are passed to `magnus-review--create'."
   (should (eq (lookup-key magnus-status-mode-map (kbd "V"))
               'magnus-review-actions)))
 
+(ert-deftest magnus-status-codex-creation-is-directly-bound ()
+  (should (eq (lookup-key magnus-status-mode-map (kbd "X"))
+              'magnus-transient-create-codex))
+  (with-temp-buffer
+    (magnus-status-mode)
+    (let ((inhibit-read-only t))
+      (insert "A status heading with no selected entity"))
+    (goto-char (point-min))
+    (should (eq (key-binding (kbd "X"))
+                'magnus-transient-create-codex))))
+
+(ert-deftest magnus-status-unbound-printable-key-explains-how-to-proceed ()
+  (with-temp-buffer
+    (magnus-status-mode)
+    (let ((inhibit-read-only t))
+      (insert "A status heading with no selected entity"))
+    (goto-char (point-min))
+    (should (eq (key-binding (kbd "Y"))
+                'magnus-status-explain-unavailable-key))
+    (let ((err
+           (cl-letf (((symbol-function 'this-command-keys-vector)
+                      (lambda () (kbd "Y"))))
+             (should-error (magnus-status-explain-unavailable-key)
+                           :type 'user-error))))
+      (should (string-match-p
+               "Y is not available here"
+               (error-message-string err)))
+      (should (string-match-p
+               "use n/p to select an agent or review"
+               (error-message-string err)))
+      (should (string-match-p
+               (regexp-quote "press ? for all actions")
+               (error-message-string err))))))
+
+(ert-deftest magnus-status-contextual-action-errors-name-the-required-row ()
+  (with-temp-buffer
+    (magnus-status-mode)
+    (let ((err (should-error (magnus-status-trace) :type 'user-error)))
+      (should
+       (equal (error-message-string err)
+              (concat "Put point on an agent row to open its thinking trace; "
+                      "use n/p to select one, then retry"))))
+    (let ((err (should-error (magnus-review-actions) :type 'user-error)))
+      (should
+       (equal (error-message-string err)
+              (concat "Put point on a review row to open its actions; "
+                      "use n/p to select one, then retry"))))))
+
 (ert-deftest magnus-status-coordination-command-is-explicitly-discoverable ()
   (should-not (lookup-key magnus-status-mode-map (kbd "J")))
   (should (eq (lookup-key magnus-status-mode-map (kbd "C"))
@@ -317,7 +365,8 @@ ARGUMENTS are passed to `magnus-review--create'."
         (should
          (equal
           (substring-no-properties (magnus-status--context-hint nil))
-          "Magnus — n/p navigate · c create agent · ? all actions"))))))
+          (concat "Magnus — n/p navigate · c create Claude · "
+                  "X create Codex · ? all actions")))))))
 
 (ert-deftest magnus-status-rename-requires-an-archived-agent ()
   (let ((instance
