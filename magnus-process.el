@@ -513,12 +513,14 @@ INSTANCE is accepted for internal callers; legacy callers are resolved by NAME."
         (magnus-onboarding-build
          (magnus-instance-id candidate) name
          :directory (magnus-instance-directory candidate)
+         :provider (magnus-instance-provider candidate)
          :returning t
          :previous-trace prev-trace
          :summon-context summon-context)
       (magnus-onboarding-build
        nil name
        :directory default-directory
+       :provider 'claude
        :returning t
        :previous-trace prev-trace
        :summon-context summon-context))))
@@ -536,6 +538,9 @@ INSTANCE is accepted for internal callers; legacy callers are resolved by NAME."
      :directory (if candidate
                     (magnus-instance-directory candidate)
                   default-directory)
+     :provider (if candidate
+                   (magnus-instance-provider candidate)
+                 'claude)
      :returning nil
      :summon-context summon-context)))
 

@@ -1610,10 +1610,11 @@ When PRE-EXISTING is non-nil, seed NAME's Active Work row."
                            ".magnus-coord.md"
                            ".claude/magnus-instructions.md"
                            "Authorization boundary"
-                           "Custom restored response guidance."))
+                           "User-visible engineering journal"
+                           "[thinking]...[end-thinking]"))
               (should (string-match-p (regexp-quote required) onboarding)))
-            (should-not (string-match-p "visible working notebook" onboarding))
-            (should-not (string-match-p (regexp-quote "[thinking]") onboarding))
+            (should-not
+             (string-match-p "Custom restored response guidance" onboarding))
             (should (eq (magnus-instance-status instance) 'running))
             (should-not (magnus-instance-purged-at instance)))
         (when (process-live-p process)

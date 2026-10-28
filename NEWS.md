@@ -41,10 +41,11 @@ provider-neutral, resource-bounded agent workspace.
   affecting append-only peer messages.
 - AI-generated dashboard fortunes are now opt-in; static messages remain the
   default.
-- `magnus-onboarding-user-instructions` can replace only the user-facing
-  response guidance in onboarding and archive resurrection while Magnus
-  retains generated identity, memory, coordination, summon, and authorization
-  context.
+- `magnus-onboarding-user-instructions` can replace only Claude Code's
+  user-facing response guidance in onboarding and archive resurrection while
+  Magnus retains generated identity, memory, coordination, summon, and
+  authorization context.  Codex and third-party providers keep Magnus's
+  standard response guidance.
 
 ### Resource hardening
 

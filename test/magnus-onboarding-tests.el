@@ -72,8 +72,8 @@
             (regexp-quote ".claude/magnus-instructions.md") prompt)))
       (delete-directory directory t))))
 
-(ert-deftest magnus-onboarding-custom-user-instructions-replace-only-guidance ()
-  "Custom guidance reaches both providers without replacing Magnus identity."
+(ert-deftest magnus-onboarding-custom-user-instructions-are-claude-only ()
+  "Custom guidance changes Claude while Codex retains Magnus's default."
   (let* ((directory (make-temp-file "magnus-onboarding-custom-user-" t))
          (magnus-onboarding-user-instructions
           (concat "When responding, treat the user as an examiner.\n"
@@ -85,41 +85,67 @@
           (magnus-test-onboarding--instance
            "codex-custom-user-uuid" "wise-deer" directory 'codex)))
     (unwind-protect
-        (dolist (entry
-                 (list (cons (magnus-process--onboarding-message claude)
-                             '("swift-wolf" "claude-custom-user-uuid"))
-                       (cons (magnus-codex--instructions codex)
-                             '("wise-deer" "codex-custom-user-uuid"))))
-          (let ((prompt (car entry)))
-            (dolist (identity (cdr entry))
-              (should (string-match-p (regexp-quote identity) prompt)))
-            (should (string-match-p "treat the user as an examiner" prompt))
-            (should (string-match-p "relevant answer last" prompt))
-            (should (string-match-p "Authorization boundary" prompt))
-            (should (string-match-p "first-person letter" prompt))
-            (should (string-match-p (regexp-quote ".magnus-coord.md") prompt))
-            (should-not (string-match-p "visible working notebook" prompt))
-            (should-not
-             (string-match-p (regexp-quote "[thinking]") prompt))))
+        (let ((claude-prompt (magnus-process--onboarding-message claude))
+              (codex-prompt (magnus-codex--instructions codex)))
+          (dolist (entry
+                   (list (cons claude-prompt
+                               '("swift-wolf" "claude-custom-user-uuid"))
+                         (cons codex-prompt
+                               '("wise-deer" "codex-custom-user-uuid"))))
+            (let ((prompt (car entry)))
+              (dolist (identity (cdr entry))
+                (should (string-match-p (regexp-quote identity) prompt)))
+              (should (string-match-p "Authorization boundary" prompt))
+              (should (string-match-p "first-person letter" prompt))
+              (should
+               (string-match-p (regexp-quote ".magnus-coord.md") prompt))))
+          (should (string-match-p "treat the user as an examiner"
+                                  claude-prompt))
+          (should (string-match-p "relevant answer last" claude-prompt))
+          (should-not (string-match-p "visible working notebook"
+                                      claude-prompt))
+          (should-not
+           (string-match-p (regexp-quote "[thinking]") claude-prompt))
+          (should-not (string-match-p "treat the user as an examiner"
+                                      codex-prompt))
+          (should-not (string-match-p "relevant answer last" codex-prompt))
+          (should (string-match-p "visible working notebook" codex-prompt))
+          (should
+           (string-match-p (regexp-quote "[thinking]") codex-prompt)))
       (delete-directory directory t))))
 
 (ert-deftest magnus-onboarding-empty-user-instructions-omit-only-guidance ()
   (let ((magnus-onboarding-user-instructions ""))
-    (let ((prompt
+    (let ((claude-prompt
            (magnus-onboarding-build
-            "quiet-agent-uuid" "quiet-agent" :returning nil)))
-      (should (string-match-p "You are quiet-agent" prompt))
-      (should (string-match-p "Authorization boundary" prompt))
-      (should (string-match-p "Begin by orienting" prompt))
-      (should-not (string-match-p "User-visible engineering journal" prompt))
+            "quiet-agent-uuid" "quiet-agent"
+            :provider 'claude :returning nil))
+          (other-prompt
+           (magnus-onboarding-build
+            "other-agent-uuid" "other-agent"
+            :provider 'third-party :returning nil)))
+      (should (string-match-p "You are quiet-agent" claude-prompt))
+      (should (string-match-p "Authorization boundary" claude-prompt))
+      (should (string-match-p "Begin by orienting" claude-prompt))
       (should-not
-       (string-match-p (regexp-quote "[thinking]") prompt)))))
+       (string-match-p "User-visible engineering journal" claude-prompt))
+      (should-not
+       (string-match-p (regexp-quote "[thinking]") claude-prompt))
+      (should (string-match-p "User-visible engineering journal" other-prompt))
+      (should
+       (string-match-p (regexp-quote "[thinking]") other-prompt)))))
 
 (ert-deftest magnus-onboarding-invalid-user-instructions-fail-clearly ()
   (let ((magnus-onboarding-user-instructions 42))
     (should-error
-     (magnus-onboarding-build "invalid-user-uuid" "invalid-user")
-     :type 'error)))
+     (magnus-onboarding-build
+      "invalid-user-uuid" "invalid-user" :provider 'claude)
+     :type 'error)
+    (should
+     (string-match-p
+      "User-visible engineering journal"
+      (magnus-onboarding-build
+       "valid-other-uuid" "valid-other" :provider 'codex)))))
 
 (ert-deftest magnus-onboarding-preserves-returning-and-summon-context ()
   (let ((prompt

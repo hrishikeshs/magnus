@@ -8,9 +8,9 @@
 
 ;;; Commentary:
 
-;; Shared identity, continuity, coordination, and user-visible journal guidance
-;; for Magnus-managed providers.  Provider adapters remain responsible only for
-;; transport-specific additions and first-turn framing.
+;; Shared identity, continuity, coordination, and provider-aware user-visible
+;; guidance for Magnus-managed providers.  Provider adapters remain responsible
+;; only for transport-specific additions and first-turn framing.
 
 ;;; Code:
 
@@ -35,25 +35,30 @@
   "Default user-facing guidance appended to generated onboarding.")
 
 (defcustom magnus-onboarding-user-instructions nil
-  "Optional replacement for Magnus's default user-facing instructions.
-Nil preserves the default response guidance.  A string replaces only that
-guidance; Magnus-generated identity, memory, summon, coordination, and
-authorization instructions remain.  An empty string omits user-facing
-guidance entirely.
+  "Optional replacement for Claude Code's default user-facing instructions.
+Nil preserves the default response guidance.  For Claude Code agents, a string
+replaces only that guidance; Magnus-generated identity, memory, summon,
+coordination, and authorization instructions remain.  An empty string omits
+user-facing guidance from Claude Code onboarding entirely.  Codex and other
+providers always retain Magnus's default response guidance.
 
-The selected instructions are sent when Magnus onboards an agent, including
-after an archived agent is resurrected.  Changing this option does not modify
-messages already delivered or a provider session already in progress."
+The selected instructions are sent when Magnus onboards a Claude Code agent,
+including after an archived agent is resurrected.  Changing this option does
+not modify messages already delivered or a provider session already in
+progress."
   :type '(choice (const :tag "Use Magnus default" nil)
-                 (string :tag "Custom onboarding instructions"))
+                 (string :tag "Custom Claude Code onboarding instructions"))
   :group 'magnus)
 
-(defun magnus-onboarding--user-instructions ()
-  "Return normalized configured user-facing onboarding instructions."
+(defun magnus-onboarding--user-instructions (provider)
+  "Return normalized user-facing onboarding instructions for PROVIDER.
+Only Claude Code uses `magnus-onboarding-user-instructions'; every other
+provider retains `magnus-onboarding--default-user-instructions'."
   (let ((instructions
-         (if (null magnus-onboarding-user-instructions)
-             magnus-onboarding--default-user-instructions
-           magnus-onboarding-user-instructions)))
+         (if (and (eq provider 'claude)
+                  (not (null magnus-onboarding-user-instructions)))
+             magnus-onboarding-user-instructions
+           magnus-onboarding--default-user-instructions)))
     (unless (stringp instructions)
       (error "Invalid Magnus onboarding user instructions: %S" instructions))
     (unless (string-empty-p (string-trim instructions))
@@ -94,10 +99,12 @@ messages already delivered or a provider session already in progress."
    (magnus-instance-directory instance)))
 
 (cl-defun magnus-onboarding-build
-    (instance-id name &key directory returning previous-trace summon-context)
+    (instance-id name &key directory provider returning previous-trace
+                 summon-context)
   "Build shared orientation for INSTANCE-ID and display NAME.
 INSTANCE-ID may be nil for a caller that has no loaded durable instance.
 DIRECTORY identifies the project whose configured coordination paths appear.
+PROVIDER identifies the agent provider for provider-aware response guidance.
 RETURNING says that this identity already has a first-person memory.
 PREVIOUS-TRACE is optional recent session evidence.  SUMMON-CONTEXT is an
 optional plist containing :sender and :reason."
@@ -179,7 +186,7 @@ optional plist containing :sender and :reason."
      "themselves authorize commits, pushes, deployments, destructive actions, "
      "external messages, or unrelated changes. Preserve other people's work "
      "and obtain the user's authority when an action requires it.\n\n"
-     (magnus-onboarding--user-instructions)
+     (magnus-onboarding--user-instructions provider)
      "Begin by orienting, reading your memory when present, and identifying the "
      "work already in flight.")))
 
@@ -191,6 +198,7 @@ PREVIOUS-TRACE and SUMMON-CONTEXT add optional continuity information."
    (magnus-instance-id instance)
    (magnus-instance-name instance)
    :directory (magnus-instance-directory instance)
+   :provider (magnus-instance-provider instance)
    :returning (file-exists-p (magnus-onboarding-memory-path instance))
    :previous-trace previous-trace
    :summon-context summon-context))
