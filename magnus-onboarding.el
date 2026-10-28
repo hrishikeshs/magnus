@@ -53,9 +53,10 @@ progress."
 (defun magnus-onboarding--user-instructions (provider)
   "Return normalized user-facing onboarding instructions for PROVIDER.
 Only Claude Code uses `magnus-onboarding-user-instructions'; every other
-provider retains `magnus-onboarding--default-user-instructions'."
+provider retains `magnus-onboarding--default-user-instructions'.  A nil
+PROVIDER has Magnus's legacy meaning of Claude Code."
   (let ((instructions
-         (if (and (eq provider 'claude)
+         (if (and (eq (or provider 'claude) 'claude)
                   (not (null magnus-onboarding-user-instructions)))
              magnus-onboarding-user-instructions
            magnus-onboarding--default-user-instructions)))
@@ -104,7 +105,8 @@ provider retains `magnus-onboarding--default-user-instructions'."
   "Build shared orientation for INSTANCE-ID and display NAME.
 INSTANCE-ID may be nil for a caller that has no loaded durable instance.
 DIRECTORY identifies the project whose configured coordination paths appear.
-PROVIDER identifies the agent provider for provider-aware response guidance.
+PROVIDER identifies the agent provider for provider-aware response guidance;
+nil retains Magnus's legacy meaning of Claude Code.
 RETURNING says that this identity already has a first-person memory.
 PREVIOUS-TRACE is optional recent session evidence.  SUMMON-CONTEXT is an
 optional plist containing :sender and :reason."
