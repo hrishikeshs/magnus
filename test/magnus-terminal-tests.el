@@ -75,6 +75,26 @@
       (when (buffer-live-p buffer)
         (kill-buffer buffer)))))
 
+(ert-deftest magnus-terminal-command-buffer-binds-only-one-direct-command ()
+  (let ((vterm-shell "/bin/original-shell")
+        (command "claude --session-id fixture 'first prompt'")
+        observed
+        buffer)
+    (cl-letf (((symbol-function 'vterm-mode)
+               (lambda () (setq observed (symbol-value 'vterm-shell))))
+              ((symbol-function 'magnus-terminal-setup-keys) #'ignore))
+      (setq buffer
+            (magnus-terminal-create-command-buffer
+             " *magnus-direct-command*" command)))
+    (unwind-protect
+        (progn
+          (should (equal observed command))
+          (should (equal vterm-shell "/bin/original-shell")))
+      (when (buffer-live-p buffer)
+        (kill-buffer buffer))))
+  (should-error
+   (magnus-terminal-create-command-buffer " *magnus-empty-command*" "")))
+
 (ert-deftest magnus-terminal-cancels-only-the-requested-delivery-scope ()
   (let* ((buffer (generate-new-buffer " *magnus-terminal-scopes*"))
          (process

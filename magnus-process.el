@@ -34,8 +34,6 @@
 (declare-function magnus--agents-index-update "magnus")
 (declare-function magnus-claude--fresh-session-id "magnus-provider-claude")
 (declare-function vterm-send-key "vterm" (key &optional shift meta ctrl))
-(declare-function vterm-send-return "vterm" ())
-(declare-function vterm-send-string "vterm" (string &optional paste-p))
 
 ;; Variables defined in magnus.el
 (defvar magnus-claude-executable)
@@ -119,12 +117,6 @@ the outer transaction's rollback at a later replacement."
     (setcar magnus-process--transaction-runtime-buffer
             (cons buffer process))))
 
-(defun magnus-process--send-return-if-owner (instance buffer process)
-  "Send Return when BUFFER and PROCESS still own INSTANCE."
-  (when (magnus-process--runtime-owner-p instance buffer process)
-    (with-current-buffer buffer
-      (vterm-send-return))))
-
 (defun magnus-process--run-ready-hook
     (instance &optional owner-buffer owner-process)
   "Run the ready hook when INSTANCE still has its expected terminal owner.
@@ -152,8 +144,28 @@ the shipped ability to customize `magnus-claude-executable' with extra flags."
 
 (defun magnus-process--claude-command (&rest arguments)
   "Return a safely quoted Claude shell command with ARGUMENTS appended."
-  (apply #'magnus-process--shell-command
-         (append (magnus-process--claude-command-prefix) arguments)))
+  (let* ((prefix (magnus-process--claude-command-prefix))
+         ;; A direct vterm launch does not source an interactive shell.  Prefer
+         ;; the executable Emacs already resolved so startup does not depend on
+         ;; shell initialization or a second PATH lookup.
+         (program (or (executable-find (car prefix)) (car prefix))))
+    (apply #'magnus-process--shell-command
+           (append (cons program (cdr prefix)) arguments))))
+
+(defun magnus-process--claude-command-with-onboarding
+    (instance arguments &optional summon-context)
+  "Return Claude command for INSTANCE, ARGUMENTS, and SUMMON-CONTEXT.
+The complete current onboarding is the final positional argument, making it
+Claude's first turn for a new session and first new turn after resumed history.
+Flatten line breaks before shell quoting so vterm launches one physical command
+without an intermediate interactive shell composer."
+  (apply #'magnus-process--claude-command
+         (append
+          arguments
+          (list
+           (replace-regexp-in-string
+            "[\n\r]+" " "
+            (magnus-process--onboarding-message instance summon-context))))))
 
 (defun magnus-process--claude-session-id-supported-p ()
   "Return non-nil when the configured Claude CLI supports `--session-id'.
@@ -387,9 +399,14 @@ When INITIAL-MESSAGE is non-nil, include it in the native TUI's first turn."
          (legacy-launch-token
           (unless explicit-session-p
             (cons instance (make-symbol "legacy-claude-launch"))))
+         (command
+          (magnus-process--claude-command-with-onboarding
+           instance
+           (when candidate-session-id
+             (list "--session-id" candidate-session-id))
+           magnus--summon-context))
          sessions-before
-         return-timer
-         onboarding-timer
+         ready-timer
          buffer
          owner-process
          spawned)
@@ -400,9 +417,10 @@ When INITIAL-MESSAGE is non-nil, include it in the native TUI's first turn."
              directory legacy-launch-token)
             (setq sessions-before
                   (magnus-process--list-sessions directory)))
-          ;; Create vterm buffer.
+          ;; Make onboarding part of process launch.  A user can visit the
+          ;; native TUI immediately without racing a delayed Magnus paste.
           (setq buffer
-                (magnus-terminal-create-buffer buffer-name))
+                (magnus-terminal-create-command-buffer buffer-name command))
           (setq owner-process (get-buffer-process buffer))
           (magnus-process--record-transaction-runtime buffer owner-process)
           (with-current-buffer buffer
@@ -411,26 +429,14 @@ When INITIAL-MESSAGE is non-nil, include it in the native TUI's first turn."
           (magnus-instances-update instance
                                    :buffer buffer
                                    :status 'running)
-          ;; Send the claude command.
-          (with-current-buffer buffer
-            (vterm-send-string
-             (if candidate-session-id
-                 (magnus-process--claude-command
-                  "--session-id" candidate-session-id)
-               (magnus-process--claude-command)))
-            (setq return-timer
-                  (run-with-timer
-                   0.1 nil
-                   #'magnus-process--send-return-if-owner
-                   instance buffer owner-process)))
           ;; Set up process sentinel.
           (magnus-process--setup-sentinel instance buffer)
-          ;; Send onboarding after Claude starts.  Capture summon context now;
-          ;; its dynamic binding unwinds before the timer fires.
-          (let ((summon-ctx magnus--summon-context))
-            (setq onboarding-timer
-                  (run-with-timer 5 nil #'magnus-process--send-onboarding
-                                  instance summon-ctx buffer owner-process)))
+          ;; Readiness notification is separate from first-turn ordering.  Keep
+          ;; the existing delayed hook, fenced to this exact runtime, while the
+          ;; argv already owns Claude's first turn.
+          (setq ready-timer
+                (run-with-timer 5 nil #'magnus-process--run-ready-hook
+                                instance buffer owner-process))
           ;; Watch for a new session to appear.  This is deliberately last, so
           ;; no later synchronous failure can orphan a successful watcher.
           (magnus-process--watch-for-session
@@ -439,40 +445,12 @@ When INITIAL-MESSAGE is non-nil, include it in the native TUI's first turn."
           (setq spawned t)
           buffer)
       (unless spawned
-        (when (timerp return-timer)
-          (cancel-timer return-timer))
-        (when (timerp onboarding-timer)
-          (cancel-timer onboarding-timer))
+        (when (timerp ready-timer)
+          (cancel-timer ready-timer))
         (magnus-process--discard-created-runtime
          instance nil (and buffer (cons buffer owner-process)))
         (magnus-process--release-legacy-session-launch
          directory legacy-launch-token)))))
-
-(defun magnus-process--send-onboarding
-    (instance &optional summon-context owner-buffer owner-process)
-  "Send onboarding message to INSTANCE.
-SUMMON-CONTEXT, if non-nil, is a plist with :sender and :reason
-from an agent-initiated summon.
-OWNER-BUFFER and OWNER-PROCESS identify the launch that scheduled this work.
-Delays the Return keystroke so the terminal has time to process
-the full message text before submitting."
-  (let* ((current-instance (magnus-process--current-instance instance))
-         (buffer (or owner-buffer
-                     (magnus-instance-buffer current-instance))))
-    (when (magnus-process--runtime-owner-p
-           current-instance buffer owner-process)
-      (let ((msg (replace-regexp-in-string
-                  "[\n\r]+" " "
-                  (magnus-process--onboarding-message
-                   current-instance summon-context))))
-        (magnus-terminal-submit
-         current-instance msg
-         (lambda ()
-           (when (magnus-process--runtime-owner-p
-                  current-instance buffer owner-process)
-             (magnus-process--run-ready-hook
-              current-instance buffer owner-process)))
-         :settle-delay 0.5 :scope 'magnus-onboarding :deduplicate t)))))
 
 (defun magnus-process--agent-memory-path (instance)
   "Return the memory file path for INSTANCE.
@@ -1215,21 +1193,24 @@ underscores with hyphens."
 
 (defun magnus-process--spawn-with-session (instance &optional session-id)
   "Spawn Claude Code for INSTANCE, optionally resuming SESSION-ID.
-Resumed terminals receive the complete current Magnus onboarding before the
-ready hook releases queued coordination work."
+The complete current Magnus onboarding is part of process launch, before the
+delayed ready notification."
   (let* ((name (magnus-instance-name instance))
          (directory (magnus-instance-directory instance))
          (buffer-name (format "*claude:%s*" name))
          (default-directory directory)
+         (command
+          (magnus-process--claude-command-with-onboarding
+           instance
+           (when session-id (list "--resume" session-id))))
          buffer
          owner-process
-         return-timer
-         onboarding-timer
+         ready-timer
          spawned)
     (unwind-protect
         (progn
           (setq buffer
-                (magnus-terminal-create-buffer buffer-name))
+                (magnus-terminal-create-command-buffer buffer-name command))
           (setq owner-process (get-buffer-process buffer))
           (magnus-process--record-transaction-runtime buffer owner-process)
           (with-current-buffer buffer
@@ -1238,34 +1219,18 @@ ready hook releases queued coordination work."
           (magnus-instances-update instance
                                    :buffer buffer
                                    :status 'running)
-          ;; Send the Claude command with optional --resume.
-          (with-current-buffer buffer
-            (if session-id
-                (vterm-send-string
-                 (magnus-process--claude-command "--resume" session-id))
-              (vterm-send-string
-               (magnus-process--claude-command)))
-            (setq return-timer
-                  (run-with-timer
-                   0.1 nil
-                   #'magnus-process--send-return-if-owner
-                   instance buffer owner-process)))
           (magnus-process--setup-sentinel instance buffer)
-          ;; A resumed provider conversation still needs current Magnus
-          ;; identity, coordination, authorization, and user-facing guidance.
-          ;; The normal onboarding sender fences this exact runtime and releases
-          ;; ready hooks only after the terminal accepts the complete message.
-          (setq onboarding-timer
+          ;; First-turn ordering is already guaranteed by COMMAND.  This timer
+          ;; only publishes the existing delayed readiness notification.
+          (setq ready-timer
                 (run-with-timer
-                 5 nil #'magnus-process--send-onboarding
-                 instance nil buffer owner-process))
+                 5 nil #'magnus-process--run-ready-hook
+                 instance buffer owner-process))
           (setq spawned t)
           buffer)
       (unless spawned
-        (when (timerp return-timer)
-          (cancel-timer return-timer))
-        (when (timerp onboarding-timer)
-          (cancel-timer onboarding-timer))
+        (when (timerp ready-timer)
+          (cancel-timer ready-timer))
         (magnus-process--discard-created-runtime
          instance nil (and buffer (cons buffer owner-process)))))))
 

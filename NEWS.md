@@ -46,6 +46,9 @@ provider-neutral, resource-bounded agent workspace.
   Magnus retains generated identity, memory, coordination, summon, and
   authorization context.  Codex and third-party providers keep Magnus's
   standard response guidance.
+- Interactive Claude onboarding is now the positional first turn of the native
+  TUI launch instead of a delayed terminal paste, so immediate user input and
+  coordination messages cannot overtake it.
 
 ### Resource hardening
 
