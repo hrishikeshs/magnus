@@ -41,6 +41,9 @@ provider-neutral, resource-bounded agent workspace.
   affecting append-only peer messages.
 - AI-generated dashboard fortunes are now opt-in; static messages remain the
   default.
+- `magnus-onboarding-user-instructions` can replace only the user-facing
+  response guidance in initial onboarding while Magnus retains generated
+  identity, memory, coordination, summon, and authorization context.
 
 ### Resource hardening
 

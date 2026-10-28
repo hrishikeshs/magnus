@@ -221,6 +221,10 @@ Magnus uses ordinary Emacs customization variables. For example:
 ;; Default project for new agents.
 (setq magnus-default-directory "~/workspace")
 
+;; Replace only the user-facing guidance in initial agent onboarding.
+(setq magnus-onboarding-user-instructions
+      "Explain claims, assumptions, uncertainty, and relevant evidence.")
+
 ;; UI and coordination.
 (setq magnus-status-show-context-hints t)
 (setq magnus-coord-reminder-interval 600)

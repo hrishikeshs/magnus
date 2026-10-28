@@ -91,7 +91,7 @@ Quiet means no output for `magnus-coord-quiescence-threshold' seconds."
   :type 'string
   :group 'magnus)
 
-(defconst magnus-coord--instructions-version 9
+(defconst magnus-coord--instructions-version 10
   "Version of the instructions template.
 Bump this when the template content changes.  Files with an older
 version marker are automatically regenerated.")
@@ -1775,15 +1775,6 @@ Release your Active Work row, log completion, preserve useful
 discoveries/decisions, and update your first-person memory. Coordination context
 does not authorize commits, pushes, deployments, destructive actions, external
 messages, or unrelated changes.
-
-## User-Visible Engineering Journal
-
-For substantive user-facing messages, put a candid engineering decision journal
-inside `[thinking]...[end-thinking]`, then the answer inside
-`[response]...[end-response]`. State useful hypotheses, evidence, uncertainty,
-constraints, alternatives, tradeoffs, contradictions, and corrections. This is
-an explicit collaborative journal; never claim it is private or raw
-chain-of-thought. Keep it proportional and omit empty narration.
 
 <!-- magnus-instructions-version: %d -->
 " instructions journal journal magnus-coord--instructions-version)))

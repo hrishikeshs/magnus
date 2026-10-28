@@ -153,6 +153,10 @@ Active projects may also contain `.magnus-coord.md`, generated instructions at
 ;; Default project for new agents.
 (setq magnus-default-directory "~/workspace")
 
+;; User-facing guidance for newly onboarded agents.
+(setq magnus-onboarding-user-instructions
+      "Explain claims, assumptions, uncertainty, and relevant evidence.")
+
 ;; Independent review defaults.
 (setq magnus-review-default-provider nil) ; opposite the author
 (setq magnus-review-default-effort 'high)
@@ -185,5 +189,15 @@ Active projects may also contain `.magnus-coord.md`, generated instructions at
 (setq magnus-coord-log-max-entries 25)
 (setq magnus-coord-reminder-interval 600)
 ```
+
+`magnus-onboarding-user-instructions` changes only the user-authored response
+guidance sent during initial onboarding. Magnus still generates the agent's
+name, durable UUID, memory and coordination paths, summon context, and
+authorization boundary. Its default value, nil, uses Magnus's standard
+guidance; a string replaces that guidance, and an empty string omits it. The
+setting affects future onboarding messages, not messages already delivered or
+a provider session already in progress. Claude receives onboarding again when
+Magnus starts a replacement terminal; a resumed Codex session retains its
+existing conversation instead.
 
 Use `M-x customize-group RET magnus RET` for every option.
