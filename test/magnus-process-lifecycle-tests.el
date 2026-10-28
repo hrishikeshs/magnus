@@ -1434,6 +1434,76 @@ When PRE-EXISTING is non-nil, seed NAME's Active Work row."
           (kill-buffer failed-buffer))
         (delete-directory directory t)))))
 
+(ert-deftest magnus-process-resurrect-rolls-back-external-onboarding-failure ()
+  (magnus-test-process-lifecycle--isolated
+    (let* ((directory (make-temp-file "magnus-resurrect-send-failure-" t))
+           (instance
+            (magnus-instances-create directory "archived-codex" 'codex))
+           runtime
+           process
+           stopped-watchers
+           operations)
+      (unwind-protect
+          (progn
+            (magnus-instances-update
+             instance :status 'purged :session-id "codex-session"
+             :purged-at 321.0)
+            (cl-letf
+                (((symbol-function 'magnus-provider-external-p)
+                  (lambda (_candidate) t))
+                 ((symbol-function 'magnus-coord-register-agent)
+                  (lambda (project _candidate)
+                    (magnus-test-process-lifecycle--claim-coord project 52)))
+                 ((symbol-function 'magnus-provider-call)
+                  (lambda (candidate operation &rest _arguments)
+                    (push operation operations)
+                    (pcase operation
+                      ('resume
+                       (setq runtime
+                             (generate-new-buffer
+                              " *failed-resurrect-send*"))
+                       (setq process
+                             (make-pipe-process
+                              :name (generate-new-buffer-name
+                                     "failed-resurrect-send")
+                              :buffer runtime :noquery t))
+                       (magnus-process--record-transaction-runtime
+                        runtime process)
+                       (magnus-instances-update
+                        candidate :status 'running :buffer runtime))
+                      ('send (error "onboarding enqueue failed"))
+                      ('stop
+                       (magnus-instances-update
+                        candidate :status 'stopped :buffer nil)))))
+                 ((symbol-function 'magnus-coord-stop-watching)
+                  (lambda (project)
+                    (push project stopped-watchers)
+                    (setq magnus-coord--watched-dirs
+                          (delete project magnus-coord--watched-dirs)))))
+              (let ((err
+                     (should-error
+                      (magnus-process-resurrect-purged instance))))
+                (should
+                 (string-match-p "onboarding enqueue failed"
+                                 (error-message-string err)))))
+            (should (equal (nreverse operations) '(resume send stop)))
+            (should
+             (equal stopped-watchers
+                    (list (magnus-test-process-lifecycle--coord-key
+                           directory))))
+            (should (eq (magnus-instance-status instance) 'purged))
+            (should-not (magnus-instance-buffer instance))
+            (should (equal (magnus-instance-session-id instance)
+                           "codex-session"))
+            (should (= (magnus-instance-purged-at instance) 321.0))
+            (should-not (process-live-p process))
+            (should-not (buffer-live-p runtime)))
+        (when (process-live-p process)
+          (delete-process process))
+        (when (buffer-live-p runtime)
+          (kill-buffer runtime))
+        (delete-directory directory t)))))
+
 (ert-deftest magnus-process-resurrect-preserves-shared-ownership-on-failure ()
   (magnus-test-process-lifecycle--isolated
     (let* ((directory (make-temp-file "magnus-resurrect-claude-" t))
@@ -1488,67 +1558,145 @@ When PRE-EXISTING is non-nil, seed NAME's Active Work row."
           (kill-buffer failed-buffer))
         (delete-directory directory t)))))
 
-(ert-deftest magnus-process-resurrection-nudge-rejects-a-replacement ()
+(ert-deftest magnus-process-resurrection-external-sends-complete-onboarding ()
   (magnus-test-process-lifecycle--isolated
-    (let* ((directory (make-temp-file "magnus-resurrect-nudge-" t))
+    (let* ((directory (make-temp-file "magnus-resurrect-onboarding-" t))
+           (magnus-onboarding-user-instructions
+            "Custom restored response guidance.")
            (instance
-            (magnus-instances-create directory "resurrected-claude"))
-           old-buffer
-           old-process
-           replacement
-           replacement-process
-           delayed
-           nudges)
+            (magnus-instances-create directory "resurrected-codex" 'codex))
+           runtime
+           process
+           operations
+           onboarding)
       (unwind-protect
           (progn
             (magnus-instances-update
-             instance :status 'purged :session-id "resume-me"
+             instance :status 'purged :session-id "codex-resume-me"
              :purged-at 123.0)
             (cl-letf
                 (((symbol-function 'magnus-provider-external-p)
-                  (lambda (_candidate) nil))
+                  (lambda (_candidate) t))
                  ((symbol-function 'magnus-coord-register-agent) #'ignore)
-                 ((symbol-function 'magnus-process--spawn-with-session)
-                  (lambda (candidate session-id)
-                    (should (equal session-id "resume-me"))
-                    (setq old-buffer
-                          (generate-new-buffer " *magnus-old-resurrection*"))
-                    (setq old-process
-                          (make-pipe-process
-                           :name (generate-new-buffer-name
-                                  "magnus-old-resurrection")
-                           :buffer old-buffer :noquery t))
-                    (when (consp magnus-process--transaction-runtime-buffer)
-                      (setcar magnus-process--transaction-runtime-buffer
-                              (cons old-buffer old-process)))
-                    (magnus-instances-update
-                     candidate :status 'running :buffer old-buffer)))
-                 ((symbol-function 'run-with-timer)
-                  (lambda (_seconds _repeat function &rest arguments)
-                    (setq delayed (cons function arguments))))
-                 ((symbol-function 'magnus-coord-nudge-agent)
-                  (lambda (&rest arguments) (push arguments nudges))))
+                 ((symbol-function 'magnus-provider-call)
+                  (lambda (candidate operation &rest arguments)
+                    (push operation operations)
+                    (pcase operation
+                      ('resume
+                       (setq runtime
+                             (generate-new-buffer
+                              " *magnus-resurrected-codex*"))
+                       (setq process
+                             (make-pipe-process
+                              :name (generate-new-buffer-name
+                                     "magnus-resurrected-codex")
+                              :buffer runtime :noquery t))
+                       (magnus-instances-update
+                        candidate :status 'running :buffer runtime)
+                       ;; Adapters may return the acquired terminal instead of
+                       ;; calling Magnus's transaction recorder themselves.
+                       runtime)
+                      ('send
+                       (should (eq (magnus-instance-buffer candidate) runtime))
+                       (setq onboarding (car arguments)))
+                      (_ (ert-fail (format "Unexpected provider operation: %S"
+                                           operation)))))))
               (magnus-process-resurrect-purged instance))
-            (should delayed)
-            (setq replacement
-                  (generate-new-buffer " *magnus-new-resurrection*"))
-            (setq replacement-process
-                  (make-pipe-process
-                   :name (generate-new-buffer-name
-                          "magnus-new-resurrection")
-                   :buffer replacement :noquery t))
+            (should (equal (nreverse operations) '(resume send)))
+            (dolist (required
+                     (list "You are resurrected-codex"
+                           (magnus-instance-id instance)
+                           ".claude/agents/resurrected-codex/memory.md"
+                           ".magnus-coord.md"
+                           ".claude/magnus-instructions.md"
+                           "Authorization boundary"
+                           "Custom restored response guidance."))
+              (should (string-match-p (regexp-quote required) onboarding)))
+            (should-not (string-match-p "visible working notebook" onboarding))
+            (should-not (string-match-p (regexp-quote "[thinking]") onboarding))
+            (should (eq (magnus-instance-status instance) 'running))
+            (should-not (magnus-instance-purged-at instance)))
+        (when (process-live-p process)
+          (delete-process process))
+        (when (buffer-live-p runtime)
+          (kill-buffer runtime))
+        (delete-directory directory t)))))
+
+(ert-deftest magnus-process-resurrection-never-onboards-reentrant-replacement ()
+  (magnus-test-process-lifecycle--isolated
+    (let* ((directory (make-temp-file "magnus-resurrect-reentrant-" t))
+           (instance
+            (magnus-instances-create directory "reentrant-codex" 'codex))
+           runtime
+           old-process
+           replacement-process
+           send-called
+           stop-called
+           stopped-watcher)
+      (unwind-protect
+          (progn
             (magnus-instances-update
-             instance :status 'running :buffer replacement)
-            (apply (car delayed) (cdr delayed))
-            (should-not nudges))
+             instance :status 'purged :session-id "reentrant-session"
+             :purged-at 456.0)
+            (cl-letf
+                (((symbol-function 'magnus-provider-external-p)
+                  (lambda (_candidate) t))
+                 ((symbol-function 'magnus-coord-register-agent)
+                  (lambda (project _candidate)
+                    (magnus-test-process-lifecycle--claim-coord project 53)))
+                 ((symbol-function 'magnus-provider-call)
+                  (lambda (candidate operation &rest _arguments)
+                    (pcase operation
+                      ('resume
+                       (setq runtime
+                             (generate-new-buffer
+                              " *magnus-reentrant-resurrection*"))
+                       (setq old-process
+                             (make-pipe-process
+                              :name (generate-new-buffer-name
+                                     "magnus-old-reentrant-resurrection")
+                              :buffer runtime :noquery t))
+                       (magnus-process--record-transaction-runtime
+                        runtime old-process)
+                       (magnus-instances-update
+                        candidate :status 'running :buffer runtime)
+                       ;; Model a public update hook installing a replacement
+                       ;; process in the same buffer before RESUME returns.
+                       (setq replacement-process
+                             (make-pipe-process
+                              :name (generate-new-buffer-name
+                                     "magnus-new-reentrant-resurrection")
+                              :buffer runtime :noquery t))
+                       runtime)
+                      ('send (setq send-called t))
+                      ('stop (setq stop-called t)))))
+                 ((symbol-function 'magnus-coord-stop-watching)
+                  (lambda (_project) (setq stopped-watcher t))))
+              (let ((err
+                     (should-error
+                      (magnus-process-resurrect-purged instance))))
+                (should
+                 (string-match-p "lost exact runtime ownership"
+                                 (error-message-string err)))))
+            (should-not send-called)
+            (should-not stop-called)
+            (should-not stopped-watcher)
+            (should-not (process-live-p old-process))
+            (should (process-live-p replacement-process))
+            (should (buffer-live-p runtime))
+            (should (eq (get-buffer-process runtime) replacement-process))
+            (should (eq (magnus-instance-buffer instance) runtime))
+            (should (eq (magnus-instance-status instance) 'running))
+            (should-not (magnus-instance-purged-at instance))
+            (should
+             (member (magnus-test-process-lifecycle--coord-key directory)
+                     magnus-coord--watched-dirs)))
         (when (process-live-p old-process)
           (delete-process old-process))
         (when (process-live-p replacement-process)
           (delete-process replacement-process))
-        (when (buffer-live-p old-buffer)
-          (kill-buffer old-buffer))
-        (when (buffer-live-p replacement)
-          (kill-buffer replacement))
+        (when (buffer-live-p runtime)
+          (kill-buffer runtime))
         (delete-directory directory t)))))
 
 (ert-deftest magnus-process-project-hash-uses-the-physical-root ()
@@ -1999,6 +2147,72 @@ When PRE-EXISTING is non-nil, seed NAME's Active Work row."
           (kill-buffer stale))
         (when (buffer-live-p replacement)
           (kill-buffer replacement))))))
+
+(ert-deftest magnus-process-resumed-claude-schedules-complete-onboarding ()
+  (magnus-test-process-lifecycle--isolated
+    (let* ((directory (make-temp-file "magnus-resumed-claude-onboarding-" t))
+           (magnus-onboarding-user-instructions
+            "Custom Claude restore guidance.")
+           (instance
+            (magnus-instances-create directory "restored-claude"))
+           (terminal
+            (generate-new-buffer " *magnus-restored-claude*"))
+           (process
+            (make-pipe-process
+             :name (generate-new-buffer-name "magnus-restored-claude")
+             :buffer terminal :noquery t))
+           scheduled
+           command
+           submission)
+      (unwind-protect
+          (progn
+            (cl-letf
+                (((symbol-function 'magnus-terminal-create-buffer)
+                  (lambda (&rest _arguments) terminal))
+                 ((symbol-function 'magnus-process--claude-command)
+                  (lambda (&rest arguments)
+                    (setq command arguments)
+                    "claude --resume claude-session"))
+                 ((symbol-function 'vterm-send-string) #'ignore)
+                 ((symbol-function 'magnus-process--setup-sentinel) #'ignore)
+                 ((symbol-function 'run-with-timer)
+                  (lambda (_seconds _repeat function &rest arguments)
+                    (push (cons function arguments) scheduled)
+                    nil)))
+              (should
+               (eq (magnus-process--spawn-with-session
+                    instance "claude-session")
+                   terminal)))
+            (should (equal command '("--resume" "claude-session")))
+            (let ((callback
+                   (assq #'magnus-process--send-onboarding scheduled)))
+              (should callback)
+              (should (equal (cdr callback)
+                             (list instance nil terminal process)))
+              (cl-letf
+                  (((symbol-function 'magnus-terminal-submit)
+                    (lambda (candidate text accepted &rest arguments)
+                      (setq submission
+                            (list candidate text accepted arguments))
+                      'submitted)))
+                (apply (car callback) (cdr callback))))
+            (should (eq (car submission) instance))
+            (dolist (required
+                     (list "You are restored-claude"
+                           (magnus-instance-id instance)
+                           ".claude/agents/restored-claude/memory.md"
+                           ".magnus-coord.md"
+                           "Authorization boundary"
+                           "Custom Claude restore guidance."))
+              (should
+               (string-match-p (regexp-quote required) (cadr submission))))
+            (should-not
+             (string-match-p "visible working notebook" (cadr submission))))
+        (when (process-live-p process)
+          (delete-process process))
+        (when (buffer-live-p terminal)
+          (kill-buffer terminal))
+        (delete-directory directory t)))))
 
 (ert-deftest magnus-process-resume-spawn-failure-discards-partial-terminal ()
   (magnus-test-process-lifecycle--isolated

@@ -196,8 +196,8 @@ name, durable UUID, memory and coordination paths, summon context, and
 authorization boundary. Its default value, nil, uses Magnus's standard
 guidance; a string replaces that guidance, and an empty string omits it. The
 setting affects future onboarding messages, not messages already delivered or
-a provider session already in progress. Claude receives onboarding again when
-Magnus starts a replacement terminal; a resumed Codex session retains its
-existing conversation instead.
+a provider session already in progress. Magnus resends the complete current
+onboarding after an archived agent is resurrected while preserving that
+agent's existing provider conversation.
 
 Use `M-x customize-group RET magnus RET` for every option.
