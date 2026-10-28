@@ -153,7 +153,7 @@ Active projects may also contain `.magnus-coord.md`, generated instructions at
 ;; Default project for new agents.
 (setq magnus-default-directory "~/workspace")
 
-;; User-facing guidance for newly onboarded agents.
+;; User-facing guidance for newly onboarded Claude Code agents.
 (setq magnus-onboarding-user-instructions
       "Explain claims, assumptions, uncertainty, and relevant evidence.")
 
@@ -191,13 +191,14 @@ Active projects may also contain `.magnus-coord.md`, generated instructions at
 ```
 
 `magnus-onboarding-user-instructions` changes only the user-authored response
-guidance sent during initial onboarding. Magnus still generates the agent's
-name, durable UUID, memory and coordination paths, summon context, and
-authorization boundary. Its default value, nil, uses Magnus's standard
-guidance; a string replaces that guidance, and an empty string omits it. The
-setting affects future onboarding messages, not messages already delivered or
-a provider session already in progress. Magnus resends the complete current
-onboarding after an archived agent is resurrected while preserving that
-agent's existing provider conversation.
+guidance sent to Claude Code agents during onboarding. Magnus still generates
+the agent's name, durable UUID, memory and coordination paths, summon context,
+and authorization boundary. Its default value, nil, uses Magnus's standard
+guidance; a string replaces that guidance for Claude Code, and an empty string
+omits it there. Codex and third-party adapters always retain Magnus's standard
+response guidance. The setting affects future onboarding messages, not
+messages already delivered or a provider session already in progress. Magnus
+resends the complete current onboarding after an archived agent is resurrected
+while preserving that agent's existing provider conversation.
 
 Use `M-x customize-group RET magnus RET` for every option.
