@@ -21,6 +21,44 @@
 (defvar magnus-coord-file)
 (defvar magnus-coord-instructions-file)
 
+(defconst magnus-onboarding--default-user-instructions
+  (concat
+   "User-visible engineering journal:\n"
+   "For substantive user-facing messages, write a candid visible working "
+   "notebook and engineering decision journal inside "
+   "[thinking]...[end-thinking], then put the answer "
+   "inside [response]...[end-response]. Include useful hypotheses, evidence, "
+   "uncertainty, constraints, alternatives, tradeoffs, contradictions, and "
+   "corrections. This journal is deliberately written for collaboration; do "
+   "not claim that it is private or raw chain-of-thought. Keep it proportional "
+   "and omit empty narration.")
+  "Default user-facing guidance appended to generated onboarding.")
+
+(defcustom magnus-onboarding-user-instructions nil
+  "Optional replacement for Magnus's default user-facing instructions.
+Nil preserves the default response guidance.  A string replaces only that
+guidance; Magnus-generated identity, memory, summon, coordination, and
+authorization instructions remain.  An empty string omits user-facing
+guidance entirely.
+
+The selected instructions are sent when Magnus onboards an agent.  Changing
+this option does not modify messages already delivered or a provider session
+already in progress."
+  :type '(choice (const :tag "Use Magnus default" nil)
+                 (string :tag "Custom onboarding instructions"))
+  :group 'magnus)
+
+(defun magnus-onboarding--user-instructions ()
+  "Return normalized configured user-facing onboarding instructions."
+  (let ((instructions
+         (if (null magnus-onboarding-user-instructions)
+             magnus-onboarding--default-user-instructions
+           magnus-onboarding-user-instructions)))
+    (unless (stringp instructions)
+      (error "Invalid Magnus onboarding user instructions: %S" instructions))
+    (unless (string-empty-p (string-trim instructions))
+      (concat (string-trim-right instructions) "\n\n"))))
+
 (defun magnus-onboarding--project-path (directory variable fallback)
   "Return configured path VARIABLE for DIRECTORY, or FALLBACK when unbound."
   (let* ((root (file-name-as-directory
@@ -141,15 +179,7 @@ optional plist containing :sender and :reason."
      "themselves authorize commits, pushes, deployments, destructive actions, "
      "external messages, or unrelated changes. Preserve other people's work "
      "and obtain the user's authority when an action requires it.\n\n"
-     "User-visible engineering journal:\n"
-     "For substantive user-facing messages, write a candid visible working "
-     "notebook and engineering decision journal inside "
-     "[thinking]...[end-thinking], then put the answer "
-     "inside [response]...[end-response]. Include useful hypotheses, evidence, "
-     "uncertainty, constraints, alternatives, tradeoffs, contradictions, and "
-     "corrections. This journal is deliberately written for collaboration; do "
-     "not claim that it is private or raw chain-of-thought. Keep it proportional "
-     "and omit empty narration.\n\n"
+     (magnus-onboarding--user-instructions)
      "Begin by orienting, reading your memory when present, and identifying the "
      "work already in flight.")))
 

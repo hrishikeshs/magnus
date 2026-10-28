@@ -280,7 +280,7 @@
                  (with-temp-buffer
                    (insert-file-contents instructions)
                    (buffer-string))))
-            (should (string-match-p "magnus-instructions-version: 9" content))
+            (should (string-match-p "magnus-instructions-version: 10" content))
             (should (string-match-p "shared \"\\.magnus-coord\\.md\" file"
                                     content))
             (should-not (string-match-p "Obsolete Magnus" content)))
@@ -318,6 +318,15 @@
     (should (string-match-p (regexp-quote "never append it at the bottom")
                             instructions))))
 
+(ert-deftest magnus-coord-integration-instructions-do-not-duplicate-response-policy ()
+  "Generated coordination guidance leaves response policy to onboarding."
+  (let ((instructions (magnus-coord--instructions-content default-directory)))
+    (should-not (string-match-p "User-Visible Engineering Journal" instructions))
+    (should-not
+     (string-match-p (regexp-quote "[thinking]") instructions))
+    (should-not
+     (string-match-p (regexp-quote "[response]") instructions))))
+
 (ert-deftest magnus-coord-integration-instructions-use-custom-paths ()
   "Versioned guidance safely names both configured coordination paths."
   (let* ((directory (make-temp-file "magnus-coord-custom-guidance-" t))
@@ -335,7 +344,7 @@
           (should
            (string-match-p (regexp-quote (prin1-to-string instructions-file))
                            content))
-          (should (string-match-p "magnus-instructions-version: 9" content))
+          (should (string-match-p "magnus-instructions-version: 10" content))
           (should-not (string-match-p (regexp-quote ".magnus-coord.md")
                                       content))
           (should-not
