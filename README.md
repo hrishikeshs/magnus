@@ -56,6 +56,12 @@ it. Register the lifecycle, messaging, trace, and headless operations that its
 CLI supports; Magnus's shared layers continue to provide identity, persistence,
 coordination, attention, and status.
 
+Interactive adapters that support archive resurrection provide both `resume`
+and `send`. The resume operation returns its terminal buffer or records the
+exact runtime owner during startup, allowing Magnus to reapply onboarding
+without steering a replacement process. Follow the Codex adapter's transaction
+owner pattern.
+
 See [`magnus-provider.el`](magnus-provider.el) for the small dispatch interface
 and [`magnus-provider-codex.el`](magnus-provider-codex.el) for a complete
 interactive and headless adapter.
@@ -221,7 +227,7 @@ Magnus uses ordinary Emacs customization variables. For example:
 ;; Default project for new agents.
 (setq magnus-default-directory "~/workspace")
 
-;; Replace only the user-facing guidance in initial agent onboarding.
+;; Replace only the user-facing guidance in agent onboarding.
 (setq magnus-onboarding-user-instructions
       "Explain claims, assumptions, uncertainty, and relevant evidence.")
 

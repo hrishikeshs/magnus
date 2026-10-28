@@ -41,9 +41,9 @@ guidance; Magnus-generated identity, memory, summon, coordination, and
 authorization instructions remain.  An empty string omits user-facing
 guidance entirely.
 
-The selected instructions are sent when Magnus onboards an agent.  Changing
-this option does not modify messages already delivered or a provider session
-already in progress."
+The selected instructions are sent when Magnus onboards an agent, including
+after an archived agent is resurrected.  Changing this option does not modify
+messages already delivered or a provider session already in progress."
   :type '(choice (const :tag "Use Magnus default" nil)
                  (string :tag "Custom onboarding instructions"))
   :group 'magnus)

@@ -94,6 +94,22 @@ process which has claimed the same buffer."
            (and (process-live-p current)
                 (or (null process) (eq process current)))))))
 
+(defun magnus-process--runtime-replaced-p (instance owner-runtime)
+  "Return non-nil when a live runtime has replaced OWNER-RUNTIME for INSTANCE.
+OWNER-RUNTIME is the exact (BUFFER . PROCESS) pair acquired by an earlier
+startup attempt.  Detect both a different buffer and a different process which
+has claimed the same buffer."
+  (let* ((current-instance (magnus-process--current-instance instance))
+         (current-buffer (magnus-instance-buffer current-instance))
+         (current-process
+          (and (buffer-live-p current-buffer)
+               (get-buffer-process current-buffer))))
+    (and (consp owner-runtime)
+         (processp current-process)
+         (process-live-p current-process)
+         (or (not (eq current-buffer (car owner-runtime)))
+             (not (eq current-process (cdr owner-runtime)))))))
+
 (defun magnus-process--record-transaction-runtime (buffer process)
   "Record exact BUFFER and PROCESS ownership for the current transaction.
 The first acquired runtime wins so a nested or reentrant launch cannot redirect
@@ -828,19 +844,16 @@ The session ID is preserved so the agent can be resurrected later
   (magnus--agents-index-update instance))
 
 (defun magnus-process-resurrect-purged (instance)
-  "Resurrect a purged INSTANCE by resuming its provider session.
-If the instructions file was updated since the agent was archived,
-nudge the agent to re-read it."
+  "Resurrect a purged INSTANCE and resend its current Magnus onboarding.
+The provider session is resumed so its conversation survives.  The complete
+onboarding is regenerated so identity, coordination, authorization, and the
+configured user-facing guidance are current."
   (when (magnus-process--headless-p instance)
     (user-error "Headless task '%s' cannot be resurrected interactively"
                 (magnus-instance-name instance)))
   (let* ((session-id (magnus-instance-session-id instance))
          (directory (magnus-instance-directory instance))
          (external (magnus-provider-external-p instance))
-         (instructions-file (magnus-coord-instructions-path directory))
-         (instructions-stale (or (not (file-exists-p instructions-file))
-                                 (magnus-coord--instructions-stale-p
-                                  instructions-file)))
          (coord-snapshot
           (magnus-process--coord-ownership-snapshot
            directory (magnus-instance-name instance)))
@@ -848,10 +861,9 @@ nudge the agent to re-read it."
          (original-buffer (magnus-instance-buffer instance))
          (original-purged-at (magnus-instance-purged-at instance))
          (magnus-process--transaction-runtime-buffer (list nil))
-         resumed-buffer
-         resumed-process
          coordination-attempted
          runtime-attempted
+         runtime-superseded
          committed)
     (unless session-id
       (user-error "No session ID for '%s' — cannot resume"
@@ -865,61 +877,99 @@ nudge the agent to re-read it."
           (magnus-instances-update instance :status 'running :purged-at nil)
           (setq runtime-attempted t)
           (if external
-              (magnus-provider-call instance 'resume)
+              (progn
+                (let ((resumed-runtime
+                       (magnus-provider-call instance 'resume)))
+                  ;; Older adapters may return their terminal without using
+                  ;; Magnus's transaction recorder.  Adopt that exact return
+                  ;; value when possible; first-writer-wins preserves a more
+                  ;; precise owner already recorded during provider startup.
+                  (when (bufferp resumed-runtime)
+                    (magnus-process--record-transaction-runtime
+                     resumed-runtime
+                     (and (buffer-live-p resumed-runtime)
+                          (get-buffer-process resumed-runtime)))))
+                (let* ((owner-runtime
+                        (car magnus-process--transaction-runtime-buffer))
+                       (current-instance
+                        (magnus-process--current-instance instance)))
+                  ;; Provider startup can run public instance hooks.  Never
+                  ;; steer a reentrant replacement which claimed the instance
+                  ;; before RESUME returned.
+                  (unless (and (consp owner-runtime)
+                               (bufferp (car owner-runtime))
+                               (processp (cdr owner-runtime)))
+                    (error
+                     "Provider `%s' did not expose an exact live runtime while restoring `%s'"
+                     (magnus-instance-provider current-instance)
+                     (magnus-instance-name current-instance)))
+                  (unless (magnus-process--runtime-owner-p
+                           current-instance
+                           (car owner-runtime)
+                           (cdr owner-runtime))
+                    (setq runtime-superseded
+                          (magnus-process--runtime-replaced-p
+                           current-instance owner-runtime))
+                    (error
+                     "Provider `%s' lost exact runtime ownership while restoring `%s'"
+                     (magnus-instance-provider current-instance)
+                     (magnus-instance-name current-instance)))
+                  ;; External providers own their input transport.  Queue the
+                  ;; complete shared onboarding through that transport so
+                  ;; Codex retains its single-writer and readiness guarantees.
+                  (magnus-provider-call
+                   current-instance 'send
+                   (magnus-process--onboarding-message current-instance))))
             (magnus-process--spawn-with-session instance session-id))
-          (setq resumed-buffer (magnus-instance-buffer instance)
-                resumed-process
-                (and (buffer-live-p resumed-buffer)
-                     (get-buffer-process resumed-buffer)))
           (setq committed t))
       (unless committed
-        (when runtime-attempted
-          (magnus-process--discard-created-runtime
-           instance external (car magnus-process--transaction-runtime-buffer)))
-        (when coordination-attempted
-          (condition-case err
-              (magnus-process--restore-coord-ownership
-               directory coord-snapshot)
-            (error
-             (message "Magnus: resurrection ownership rollback failed for %s: %s"
-                      directory (error-message-string err)))))
-        (condition-case err
-            (magnus-instances-update
-             instance
-             :status original-status
-             :buffer (and (buffer-live-p original-buffer) original-buffer)
-             :session-id session-id
-             :purged-at original-purged-at)
-          (error
-           ;; As with directory moves, notification hooks run after mutation.
-           ;; Complete rollback directly without replacing the startup error.
-           (setf (magnus-instance-status instance) original-status
-                 (magnus-instance-buffer instance)
-                 (and (buffer-live-p original-buffer) original-buffer)
-                 (magnus-instance-session-id instance) session-id
-                 (magnus-instance-purged-at instance) original-purged-at)
-           (message "Magnus: resurrection registry rollback failed for %s: %s"
-                    (magnus-instance-name instance)
-                    (error-message-string err))))))
-    ;; If instructions were outdated, nudge agent to re-read after spawn.
-    ;; External providers queue this until their resumed TUI is ready.
-    (when instructions-stale
-      (run-with-timer
-       5 nil
-       (lambda ()
-         (let ((current-instance
-                (magnus-process--current-instance instance)))
-           (when (magnus-process--runtime-owner-p
-                  current-instance resumed-buffer resumed-process)
-             (magnus-coord-nudge-agent
-              current-instance
-              (format
-               (concat
-                "The coordination protocol has been updated. Please re-read "
-                "%S for the latest shared-file protocol and "
-                "engineering-journal guidance.")
-               (magnus-coord-display-instructions-file directory))
-              "Magnus"))))))
+        (let* ((owner-runtime
+                (car magnus-process--transaction-runtime-buffer))
+               (replacement-won
+                (or runtime-superseded
+                    (magnus-process--runtime-replaced-p
+                     instance owner-runtime))))
+          (when runtime-attempted
+            (magnus-process--discard-created-runtime
+             instance external owner-runtime))
+          ;; Provider cleanup can itself run public hooks.  Recheck after it so
+          ;; a replacement installed during STOP receives the same protection.
+          (setq replacement-won
+                (or replacement-won
+                    (magnus-process--runtime-replaced-p
+                     instance owner-runtime)))
+          ;; A live replacement owns both the durable lifecycle state and the
+          ;; coordination registration acquired by this attempt.  Clean only
+          ;; the stale runtime; rolling back shared state would damage it.
+          (unless replacement-won
+            (when coordination-attempted
+              (condition-case err
+                  (magnus-process--restore-coord-ownership
+                   directory coord-snapshot)
+                (error
+                 (message
+                  "Magnus: resurrection ownership rollback failed for %s: %s"
+                  directory (error-message-string err)))))
+            (condition-case err
+                (magnus-instances-update
+                 instance
+                 :status original-status
+                 :buffer (and (buffer-live-p original-buffer) original-buffer)
+                 :session-id session-id
+                 :purged-at original-purged-at)
+              (error
+               ;; As with directory moves, notification hooks run after
+               ;; mutation.  Complete rollback directly without replacing the
+               ;; startup error.
+               (setf (magnus-instance-status instance) original-status
+                     (magnus-instance-buffer instance)
+                     (and (buffer-live-p original-buffer) original-buffer)
+                     (magnus-instance-session-id instance) session-id
+                     (magnus-instance-purged-at instance) original-purged-at)
+               (message
+                "Magnus: resurrection registry rollback failed for %s: %s"
+                (magnus-instance-name instance)
+                (error-message-string err))))))))
     instance))
 
 (defun magnus-process-suspend (instance)
@@ -1159,7 +1209,9 @@ underscores with hyphens."
     (replace-regexp-in-string "[/ ~_]+" "-" path)))
 
 (defun magnus-process--spawn-with-session (instance &optional session-id)
-  "Spawn a Claude Code process for INSTANCE, optionally resuming SESSION-ID."
+  "Spawn Claude Code for INSTANCE, optionally resuming SESSION-ID.
+Resumed terminals receive the complete current Magnus onboarding before the
+ready hook releases queued coordination work."
   (let* ((name (magnus-instance-name instance))
          (directory (magnus-instance-directory instance))
          (buffer-name (format "*claude:%s*" name))
@@ -1167,7 +1219,7 @@ underscores with hyphens."
          buffer
          owner-process
          return-timer
-         ready-timer
+         onboarding-timer
          spawned)
     (unwind-protect
         (progn
@@ -1194,20 +1246,21 @@ underscores with hyphens."
                    #'magnus-process--send-return-if-owner
                    instance buffer owner-process)))
           (magnus-process--setup-sentinel instance buffer)
-          ;; Resumed Claude sessions have no onboarding callback to signal that
-          ;; their composer is ready.  Use the same conservative startup
-          ;; window as initial onboarding before releasing durable deliveries.
-          (setq ready-timer
+          ;; A resumed provider conversation still needs current Magnus
+          ;; identity, coordination, authorization, and user-facing guidance.
+          ;; The normal onboarding sender fences this exact runtime and releases
+          ;; ready hooks only after the terminal accepts the complete message.
+          (setq onboarding-timer
                 (run-with-timer
-                 5 nil #'magnus-process--run-ready-hook
-                 instance buffer owner-process))
+                 5 nil #'magnus-process--send-onboarding
+                 instance nil buffer owner-process))
           (setq spawned t)
           buffer)
       (unless spawned
         (when (timerp return-timer)
           (cancel-timer return-timer))
-        (when (timerp ready-timer)
-          (cancel-timer ready-timer))
+        (when (timerp onboarding-timer)
+          (cancel-timer onboarding-timer))
         (magnus-process--discard-created-runtime
          instance nil (and buffer (cons buffer owner-process)))))))
 
