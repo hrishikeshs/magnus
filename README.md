@@ -3,6 +3,22 @@
 [![MELPA](https://melpa.org/packages/magnus-badge.svg)](https://melpa.org/#/magnus)
 [![CI](https://github.com/hrishikeshs/magnus/actions/workflows/ci.yml/badge.svg)](https://github.com/hrishikeshs/magnus/actions/workflows/ci.yml)
 
+> [!IMPORTANT]
+> **Recommended model providers:** Magnus recommends **OpenAI Codex** and
+> **open-weight models** for new and existing agent workflows. Anthropic models
+> released after **Claude Opus 4.6** are deprecated for use with Magnus because
+> Anthropic's classifier and safeguard behavior can block legitimate engineering
+> and explanatory instructions, making those models unreliable for Magnus's
+> collaborative agent workflows. The failure is not theoretical: Anthropic's
+> safeguards have [rejected even a one-word greeting as `reasoning_extraction`](https://github.com/anthropics/claude-code/issues/87640)
+> because ordinary project instructions were present in the loaded context.
+> A coding model that can lock paying users out of benign sessions because an
+> overreaching classifier confuses normal engineering accountability with policy
+> abuse is not dependable infrastructure. Forcing users to disguise legitimate
+> collaboration instructions through linguistic gymnastics is an absurd and
+> unacceptable product decision. Magnus will not recommend these models unless
+> Anthropic fixes the underlying behavior.
+
 A magit-inspired interface for managing multiple Claude Code and Codex instances within Emacs.
 
 Run multiple AI agents in parallel, let them communicate to avoid conflicts,
