@@ -33,6 +33,8 @@
 (declare-function vterm-send-return "vterm" ())
 (declare-function vterm-send-string "vterm" (string &optional paste-p))
 
+(defvar vterm-shell)
+
 (defcustom magnus-terminal-delivery-retry-delay 1.0
   "Seconds before retrying delivery to a user-owned or failed terminal."
   :type 'number
@@ -78,6 +80,17 @@ fails."
           buffer)
       (unless initialized
         (magnus-terminal--discard-buffer buffer)))))
+
+(defun magnus-terminal-create-command-buffer
+    (buffer-name command &optional environment)
+  "Create BUFFER-NAME with vterm running shell COMMAND directly.
+COMMAND must be a nonempty safely quoted shell command.  ENVIRONMENT has the
+same meaning as in `magnus-terminal-create-buffer'.  Bind `vterm-shell' only
+for this allocation so no interactive shell composer exists before COMMAND."
+  (unless (and (stringp command) (not (string-empty-p command)))
+    (error "A nonempty terminal command is required"))
+  (let ((vterm-shell command))
+    (magnus-terminal-create-buffer buffer-name environment)))
 
 (defun magnus-terminal-send-escape ()
   "Send ESC to the terminal, for use in place of `keyboard-quit'."

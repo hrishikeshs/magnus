@@ -555,8 +555,6 @@ When PRE-EXISTING is non-nil, seed NAME's Active Work row."
            (instance (magnus-instances-create directory "failed-spawn"))
            (terminal (generate-new-buffer " *failed-spawn-terminal*"))
            (first-timer (timer-create))
-           (second-timer (timer-create))
-           (timers (list first-timer second-timer))
            cancelled
            sent-command
            terminal-environment)
@@ -572,16 +570,14 @@ When PRE-EXISTING is non-nil, seed NAME's Active Work row."
                ((symbol-function 'magnus-process--list-sessions)
                 (lambda (_directory)
                   (error "explicit session launch must not scan")))
-               ((symbol-function 'magnus-terminal-create-buffer)
-                (lambda (_name &optional environment)
+               ((symbol-function 'magnus-terminal-create-command-buffer)
+                (lambda (_name command &optional environment)
+                  (setq sent-command command)
                   (setq terminal-environment environment)
                   terminal))
-               ((symbol-function 'vterm-send-string)
-                (lambda (command &optional _paste)
-                  (setq sent-command command)))
                ((symbol-function 'magnus-process--setup-sentinel) #'ignore)
                ((symbol-function 'run-with-timer)
-                (lambda (&rest _arguments) (pop timers)))
+                (lambda (&rest _arguments) first-timer))
                ((symbol-function 'cancel-timer)
                 (lambda (timer) (push timer cancelled)))
                ((symbol-function 'magnus-process--watch-for-session)
@@ -595,10 +591,22 @@ When PRE-EXISTING is non-nil, seed NAME's Active Work row."
             (should (eq (magnus-instance-status instance) 'stopped))
             (should-not (magnus-instance-session-id instance))
             (should
-             (equal sent-command
-                    "claude --session-id 11111111-1111-4111-a111-111111111111"))
+             (string-prefix-p
+              (concat
+               (magnus-process--claude-command
+                "--session-id" "11111111-1111-4111-a111-111111111111")
+               " ")
+              sent-command))
+            (should
+             (string-match-p
+              (regexp-quote (shell-quote-argument "You are failed-spawn"))
+              sent-command))
+            (should
+             (string-match-p
+              (regexp-quote (shell-quote-argument "Begin by orienting"))
+              sent-command))
             (should (memq first-timer cancelled))
-            (should (memq second-timer cancelled)))
+            (should (= (length cancelled) 1)))
         (when (buffer-live-p terminal)
           (kill-buffer terminal))
         (delete-directory directory t)))))
@@ -716,6 +724,61 @@ When PRE-EXISTING is non-nil, seed NAME's Active Work row."
       (should (equal (magnus-process--claude-command-prefix)
                      '("claude" "--dangerously-skip-permissions"))))))
 
+(ert-deftest magnus-process-claude-command-prefers-resolved-executable ()
+  (let ((magnus-claude-executable "claude --fixture-flag"))
+    (cl-letf (((symbol-function 'executable-find)
+               (lambda (command)
+                 (and (equal command "claude") "/resolved/bin/claude"))))
+      (should
+       (equal (magnus-process--claude-command "prompt")
+              "/resolved/bin/claude --fixture-flag prompt")))))
+
+(ert-deftest magnus-process-claude-onboarding-is-one-safe-final-argument ()
+  (let* ((directory (make-temp-file "magnus-onboarding-argv-" t))
+         (magnus-claude-executable "claude --fixture-flag")
+         (magnus-onboarding-user-instructions
+          "Custom line one.\nKeep $(), `ticks`, quotes ' and semicolons; inert.")
+         (instance
+          (magnus-instances-create directory "safe-argv-claude"))
+         (onboarding
+          (replace-regexp-in-string
+           "[\n\r]+" " " (magnus-process--onboarding-message instance)))
+         command)
+    (unwind-protect
+        (cl-letf (((symbol-function 'executable-find) (lambda (_command) nil)))
+          (setq command
+                (magnus-process--claude-command-with-onboarding
+                 instance '("--session-id" "fixture-session")))
+          (should
+           (equal
+            command
+            (magnus-process--shell-command
+             "claude" "--fixture-flag" "--session-id" "fixture-session"
+             onboarding)))
+          (should-not (string-match-p "[\n\r]" command)))
+      (delete-directory directory t))))
+
+(ert-deftest magnus-process-claude-onboarding-survives-real-shell-boundary ()
+  (let* ((directory (make-temp-file "magnus-onboarding-shell-" t))
+         (magnus-onboarding-user-instructions
+          "Keep $(), `ticks`, quotes ' \" and semicolons; inert.\nSecond line.")
+         (instance
+          (magnus-instances-create directory "shell-boundary-claude"))
+         (onboarding
+          (replace-regexp-in-string
+           "[\n\r]+" " " (magnus-process--onboarding-message instance)))
+         command)
+    (unwind-protect
+        (cl-letf (((symbol-function 'magnus-process--claude-command-prefix)
+                   (lambda () '("/usr/bin/printf" "%s\\n"))))
+          (setq command
+                (magnus-process--claude-command-with-onboarding
+                 instance '("--session-id" "fixture-session")))
+          (should
+           (equal (process-lines shell-file-name "-c" command)
+                  (list "--session-id" "fixture-session" onboarding))))
+      (delete-directory directory t))))
+
 (ert-deftest magnus-process-claude-session-probe-includes-prefix-flags ()
   (let ((magnus-claude-executable "claude --fixture-flag")
         (magnus-process--claude-session-id-support-cache
@@ -761,15 +824,12 @@ When PRE-EXISTING is non-nil, seed NAME's Active Work row."
                ((symbol-function 'magnus-process--list-sessions)
                 (lambda (_directory)
                   (error "exact session launches must not scan")))
-               ((symbol-function 'magnus-terminal-create-buffer)
-                (lambda (name &optional _environment)
+               ((symbol-function 'magnus-terminal-create-command-buffer)
+                (lambda (name command &optional _environment)
                   (let ((buffer (generate-new-buffer (concat " *" name))))
                     (push buffer buffers)
+                    (puthash buffer command commands)
                     buffer)))
-               ((symbol-function 'vterm-send-string)
-                (lambda (command &optional _paste)
-                  (puthash (current-buffer) command commands)))
-               ((symbol-function 'vterm-send-return) #'ignore)
                ((symbol-function 'magnus-process--setup-sentinel) #'ignore)
                ((symbol-function 'run-with-timer)
                 (lambda (&rest _arguments) nil))
@@ -797,10 +857,18 @@ When PRE-EXISTING is non-nil, seed NAME's Active Work row."
                 (should (eq (plist-get watch :owner-process)
                             (get-buffer-process owner)))
                 (should
-                 (equal
-                  (gethash owner commands)
-                  (magnus-process--claude-command
-                   "--session-id" candidate)))
+                 (string-prefix-p
+                  (concat
+                   (magnus-process--claude-command
+                    "--session-id" candidate)
+                   " ")
+                  (gethash owner commands)))
+                (should
+                 (string-match-p
+                  (regexp-quote
+                   (shell-quote-argument
+                    (format "You are %s" (magnus-instance-name instance))))
+                  (gethash owner commands)))
                 (make-directory (file-name-directory path) t)
                 (with-temp-file path (insert "{}\n"))
                 (should
@@ -827,6 +895,7 @@ When PRE-EXISTING is non-nil, seed NAME's Active Work row."
            (first (magnus-instances-create directory "legacy-first"))
            (second (magnus-instances-create directory "legacy-second"))
            (buffers nil)
+           commands
            first-token)
       (unwind-protect
           (cl-letf
@@ -835,12 +904,12 @@ When PRE-EXISTING is non-nil, seed NAME's Active Work row."
                 (lambda () nil))
                ((symbol-function 'magnus-process--list-sessions)
                 (lambda (_directory) nil))
-               ((symbol-function 'magnus-terminal-create-buffer)
-                (lambda (name &optional _environment)
+               ((symbol-function 'magnus-terminal-create-command-buffer)
+                (lambda (name command &optional _environment)
                   (let ((buffer (generate-new-buffer (concat " *" name))))
                     (push buffer buffers)
+                    (push command commands)
                     buffer)))
-               ((symbol-function 'vterm-send-string) #'ignore)
                ((symbol-function 'magnus-process--setup-sentinel) #'ignore)
                ((symbol-function 'run-with-timer)
                 (lambda (&rest _arguments) nil))
@@ -855,6 +924,15 @@ When PRE-EXISTING is non-nil, seed NAME's Active Work row."
                                       (error-message-string err))))
             (should first-token)
             (should (= (length buffers) 1))
+            (should (= (length commands) 1))
+            (should
+             (string-prefix-p
+              (concat (magnus-process--claude-command) " ")
+              (car commands)))
+            (should
+             (string-match-p
+              (regexp-quote (shell-quote-argument "You are legacy-first"))
+              (car commands)))
             (should-not (magnus-instance-buffer second))
             (should-not (magnus-instance-session-id second))
             (magnus-process--release-legacy-session-launch
@@ -2149,7 +2227,7 @@ When PRE-EXISTING is non-nil, seed NAME's Active Work row."
         (when (buffer-live-p replacement)
           (kill-buffer replacement))))))
 
-(ert-deftest magnus-process-resumed-claude-schedules-complete-onboarding ()
+(ert-deftest magnus-process-resumed-claude-launches-complete-onboarding-first ()
   (magnus-test-process-lifecycle--isolated
     (let* ((directory (make-temp-file "magnus-resumed-claude-onboarding-" t))
            (magnus-onboarding-user-instructions
@@ -2163,18 +2241,19 @@ When PRE-EXISTING is non-nil, seed NAME's Active Work row."
              :name (generate-new-buffer-name "magnus-restored-claude")
              :buffer terminal :noquery t))
            scheduled
-           command
-           submission)
+           command-arguments
+           direct-command)
       (unwind-protect
           (progn
             (cl-letf
-                (((symbol-function 'magnus-terminal-create-buffer)
-                  (lambda (&rest _arguments) terminal))
+                (((symbol-function 'magnus-terminal-create-command-buffer)
+                  (lambda (_name command &optional _environment)
+                    (setq direct-command command)
+                    terminal))
                  ((symbol-function 'magnus-process--claude-command)
                   (lambda (&rest arguments)
-                    (setq command arguments)
-                    "claude --resume claude-session"))
-                 ((symbol-function 'vterm-send-string) #'ignore)
+                    (setq command-arguments arguments)
+                    "safe-direct-command"))
                  ((symbol-function 'magnus-process--setup-sentinel) #'ignore)
                  ((symbol-function 'run-with-timer)
                   (lambda (_seconds _repeat function &rest arguments)
@@ -2184,31 +2263,27 @@ When PRE-EXISTING is non-nil, seed NAME's Active Work row."
                (eq (magnus-process--spawn-with-session
                     instance "claude-session")
                    terminal)))
-            (should (equal command '("--resume" "claude-session")))
-            (let ((callback
-                   (assq #'magnus-process--send-onboarding scheduled)))
-              (should callback)
-              (should (equal (cdr callback)
-                             (list instance nil terminal process)))
-              (cl-letf
-                  (((symbol-function 'magnus-terminal-submit)
-                    (lambda (candidate text accepted &rest arguments)
-                      (setq submission
-                            (list candidate text accepted arguments))
-                      'submitted)))
-                (apply (car callback) (cdr callback))))
-            (should (eq (car submission) instance))
-            (dolist (required
-                     (list "You are restored-claude"
-                           (magnus-instance-id instance)
-                           ".claude/agents/restored-claude/memory.md"
-                           ".magnus-coord.md"
-                           "Authorization boundary"
-                           "Custom Claude restore guidance."))
-              (should
-               (string-match-p (regexp-quote required) (cadr submission))))
-            (should-not
-             (string-match-p "visible working notebook" (cadr submission))))
+            (should (equal direct-command "safe-direct-command"))
+            (should (equal (seq-take command-arguments 2)
+                           '("--resume" "claude-session")))
+            (should (= (length command-arguments) 3))
+            (let ((onboarding (nth 2 command-arguments)))
+              (should-not (string-match-p "[\n\r]" onboarding))
+              (dolist (required
+                       (list "You are restored-claude"
+                             (magnus-instance-id instance)
+                             ".claude/agents/restored-claude/memory.md"
+                             ".magnus-coord.md"
+                             "Authorization boundary"
+                             "Custom Claude restore guidance."))
+                (should
+                 (string-match-p (regexp-quote required) onboarding)))
+              (should-not
+               (string-match-p "visible working notebook" onboarding)))
+            (should (= (length scheduled) 1))
+            (should (equal (car scheduled)
+                           (cons #'magnus-process--run-ready-hook
+                                 (list instance terminal process)))))
         (when (process-live-p process)
           (delete-process process))
         (when (buffer-live-p terminal)
@@ -2221,78 +2296,18 @@ When PRE-EXISTING is non-nil, seed NAME's Active Work row."
            (magnus-instances-create default-directory "failed-resume"))
           terminal)
       (cl-letf (((symbol-value 'magnus-claude-executable) "claude")
-                ((symbol-function 'magnus-terminal-create-buffer)
+                ((symbol-function 'magnus-terminal-create-command-buffer)
                  (lambda (&rest _arguments)
                    (setq terminal
                          (generate-new-buffer " *magnus-failed-resume*"))))
-                ((symbol-function 'vterm-send-string)
+                ((symbol-function 'magnus-process--setup-sentinel)
                  (lambda (&rest _arguments)
-                   (error "simulated resume send failure"))))
+                   (error "simulated resume setup failure"))))
         (should-error
          (magnus-process--spawn-with-session instance "session-to-resume")))
       (should-not (buffer-live-p terminal))
       (should-not (magnus-instance-buffer instance))
       (should (eq (magnus-instance-status instance) 'stopped)))))
-
-(ert-deftest magnus-process-stale-onboarding-cannot-steer-a-replacement ()
-  (magnus-test-process-lifecycle--isolated
-    (let* ((instance
-            (magnus-instances-create default-directory "late-onboarding"))
-           (old-buffer (generate-new-buffer " *magnus-old-onboarding*"))
-           (old-process
-            (make-pipe-process
-             :name (generate-new-buffer-name "magnus-old-onboarding")
-             :buffer old-buffer :noquery t))
-           (replacement
-            (generate-new-buffer " *magnus-new-onboarding*"))
-           (replacement-process
-            (make-pipe-process
-             :name (generate-new-buffer-name "magnus-new-onboarding")
-             :buffer replacement :noquery t))
-           submission
-           ready)
-      (unwind-protect
-          (cl-letf (((symbol-function 'magnus-process--onboarding-message)
-                     (lambda (&rest _arguments) "hello\nreplacement"))
-                    ((symbol-function 'magnus-terminal-submit)
-                     (lambda (candidate text accepted &rest arguments)
-                       (setq submission
-                             (list candidate text accepted arguments))
-                       'submitted)))
-            ;; The five-second launch timer must become a no-op if this launch
-            ;; lost ownership before it even tried to submit onboarding.
-            (magnus-instances-update
-             instance :status 'running :buffer replacement)
-            (magnus-process--send-onboarding
-             instance nil old-buffer old-process)
-            (should-not submission)
-
-            ;; The terminal arbiter owns text plus Return atomically.  Its
-            ;; acceptance callback still rechecks runtime ownership before
-            ;; publishing readiness.
-            (magnus-instances-update
-             instance :status 'running :buffer old-buffer)
-            (let ((magnus-process-ready-hook
-                   (list (lambda (_candidate) (setq ready t)))))
-              (magnus-process--send-onboarding
-               instance nil old-buffer old-process)
-              (should (eq (car submission) instance))
-              (should (equal (cadr submission) "hello replacement"))
-              (should (equal (nth 3 submission)
-                             '(:settle-delay 0.5 :scope magnus-onboarding
-                               :deduplicate t)))
-              (magnus-instances-update
-               instance :status 'running :buffer replacement)
-              (funcall (nth 2 submission)))
-            (should-not ready))
-        (when (process-live-p old-process)
-          (delete-process old-process))
-        (when (process-live-p replacement-process)
-          (delete-process replacement-process))
-        (when (buffer-live-p old-buffer)
-          (kill-buffer old-buffer))
-        (when (buffer-live-p replacement)
-          (kill-buffer replacement))))))
 
 (ert-deftest magnus-process-stale-resume-ready-timer-cannot-release-work ()
   (magnus-test-process-lifecycle--isolated
@@ -2309,31 +2324,21 @@ When PRE-EXISTING is non-nil, seed NAME's Active Work row."
             (make-pipe-process
              :name (generate-new-buffer-name "magnus-new-resume-ready")
              :buffer replacement :noquery t))
-           ready
-           returns)
+           ready)
       (unwind-protect
           (let ((magnus-process-ready-hook
                  (list (lambda (_candidate) (push 'ready ready)))))
             (magnus-instances-update
              instance :status 'running :buffer replacement)
-            ;; Model both delayed callbacks installed by the old resume.
-            (cl-letf (((symbol-function 'vterm-send-return)
-                       (lambda () (push (current-buffer) returns))))
-              (magnus-process--send-return-if-owner
-               instance old-buffer old-process))
+            ;; A delayed readiness callback from a replaced direct launch must
+            ;; not release automated coordination work.
             (magnus-process--run-ready-hook
              instance old-buffer old-process)
-            (should-not returns)
             (should-not ready)
 
-            ;; The same callbacks still work for the exact current owner.
-            (cl-letf (((symbol-function 'vterm-send-return)
-                       (lambda () (push (current-buffer) returns))))
-              (magnus-process--send-return-if-owner
-               instance replacement replacement-process))
+            ;; The same callback still works for the exact current owner.
             (magnus-process--run-ready-hook
              instance replacement replacement-process)
-            (should (equal returns (list replacement)))
             (should (equal ready '(ready))))
         (when (process-live-p old-process)
           (delete-process old-process))

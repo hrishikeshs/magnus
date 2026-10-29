@@ -81,15 +81,23 @@
          (claude
           (magnus-test-onboarding--instance
            "claude-custom-user-uuid" "swift-wolf" directory 'claude))
+         (legacy-claude
+          (magnus-test-onboarding--instance
+           "legacy-claude-custom-user-uuid" "bright-wren" directory nil))
          (codex
           (magnus-test-onboarding--instance
            "codex-custom-user-uuid" "wise-deer" directory 'codex)))
     (unwind-protect
         (let ((claude-prompt (magnus-process--onboarding-message claude))
+              (legacy-prompt
+               (magnus-process--onboarding-message legacy-claude))
               (codex-prompt (magnus-codex--instructions codex)))
           (dolist (entry
                    (list (cons claude-prompt
                                '("swift-wolf" "claude-custom-user-uuid"))
+                         (cons legacy-prompt
+                               '("bright-wren"
+                                 "legacy-claude-custom-user-uuid"))
                          (cons codex-prompt
                                '("wise-deer" "codex-custom-user-uuid"))))
             (let ((prompt (car entry)))
@@ -106,6 +114,10 @@
                                       claude-prompt))
           (should-not
            (string-match-p (regexp-quote "[thinking]") claude-prompt))
+          (should (string-match-p "treat the user as an examiner"
+                                  legacy-prompt))
+          (should-not (string-match-p "visible working notebook"
+                                      legacy-prompt))
           (should-not (string-match-p "treat the user as an examiner"
                                       codex-prompt))
           (should-not (string-match-p "relevant answer last" codex-prompt))
