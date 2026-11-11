@@ -24,7 +24,6 @@
 (require 'magnus-attention)
 (require 'magnus-health)
 (require 'magnus-review)
-(require 'magnus-onboarding)
 
 (declare-function magnus-dispatch "magnus-transient")
 (declare-function magnus-review-request-dispatch "magnus-transient")
@@ -42,11 +41,9 @@
 (declare-function magnus-coord-refresh-all "magnus-coord")
 (declare-function magnus-coord-reconcile-all "magnus-coord")
 (declare-function magnus-retro "magnus-coord")
-(declare-function magnus-persistence-save "magnus-persistence")
 (declare-function magnus--agents-index-get "magnus")
 
 (defvar magnus-coord--do-not-disturb)
-(defvar magnus-persistence--autosave-active nil)
 (declare-function magnus-context "magnus-context")
 
 ;; Defined in magnus.el
@@ -217,7 +214,6 @@ truthful.  CALLBACK is accepted for ElDoc's documentation-function protocol."
                     (concat
                      "%s (archived) — "
                      "\\[magnus-status-resurrect-purged] resurrect · "
-                     "\\[magnus-status-rename] rename · "
                      "\\[magnus-dispatch] all actions")
                     (magnus-instance-name instance))
                  (format
@@ -279,7 +275,6 @@ user to its actions instead."
     (define-key map (kbd "c") #'magnus-status-create)
     (define-key map (kbd "X") #'magnus-transient-create-codex)
     (define-key map (kbd "k") #'magnus-status-archive)
-    (define-key map (kbd "r") #'magnus-status-rename)
     (define-key map (kbd "R") #'magnus-status-resurrect-purged)
     (define-key map (kbd "s") #'magnus-status-suspend)
     (define-key map (kbd "S") #'magnus-status-resume)
@@ -1071,103 +1066,6 @@ Stops the process but preserves the session ID for later resurrection."
                     (magnus-instance-name instance)))
     (magnus-status--selection-error
      "an archived agent row" "resurrect it")))
-
-(defun magnus-status--rename-archived-instance (instance new-name)
-  "Transactionally rename archived INSTANCE to NEW-NAME.
-Move its project-local memory home before publishing the new registry name.
-If either the registry notification or home migration fails, restore both."
-  (unless (eq (magnus-instance-status instance) 'purged)
-    (user-error "Archive %s before renaming it"
-                (magnus-instance-name instance)))
-  (magnus-instances--validate-name new-name)
-  (magnus-instances--ensure-name-available
-   (magnus-instance-directory instance) new-name instance)
-  (let* ((old-name (magnus-instance-name instance))
-         (original-pending-rename
-          (magnus-instance-pending-rename-from instance))
-         (next-pending-rename
-          (when (magnus-instance-session-id instance)
-            (cond
-             ((and original-pending-rename
-                   (string= new-name original-pending-rename))
-              nil)
-             (original-pending-rename original-pending-rename)
-             (t old-name))))
-         (directory (magnus-instance-directory instance))
-         (old-home
-          (directory-file-name
-           (file-name-directory
-            (expand-file-name
-             (magnus-onboarding-memory-relative-path old-name) directory))))
-         (new-home
-          (directory-file-name
-           (file-name-directory
-            (expand-file-name
-             (magnus-onboarding-memory-relative-path new-name) directory))))
-         moved)
-    (unless (string= old-name new-name)
-      (when (or (file-exists-p new-home) (file-symlink-p new-home))
-        (user-error "Agent home already exists for %s" new-name))
-      (unwind-protect
-          (condition-case err
-              (progn
-                (when (or (file-exists-p old-home)
-                          (file-symlink-p old-home))
-                  (make-directory (file-name-directory new-home) t)
-                  (rename-file old-home new-home)
-                  (setq moved t))
-                (setf (magnus-instance-name instance) new-name
-                      (magnus-instance-pending-rename-from instance)
-                      next-pending-rename)
-                (run-hooks 'magnus-instances-changed-hook)
-                ;; During a normal initialized session, make the home move and
-                ;; registry rename durable before reporting success.  The
-                ;; persistence writer is atomic, so a failure can still roll
-                ;; the in-memory and filesystem halves back together.
-                (when (and (boundp 'magnus-persistence--autosave-active)
-                           magnus-persistence--autosave-active
-                           (fboundp 'magnus-persistence-save))
-                  (magnus-persistence-save)))
-            (error
-             (setf (magnus-instance-name instance) old-name
-                   (magnus-instance-pending-rename-from instance)
-                   original-pending-rename)
-             (when moved
-               (condition-case rollback-error
-                   (rename-file new-home old-home)
-                 (error
-                  (error "Rename failed (%s); home rollback also failed (%s)"
-                         (error-message-string err)
-                         (error-message-string rollback-error)))))
-             ;; Observers may have seen the tentative name before one failed.
-             ;; Best-effort notification restores their final projection.
-             (condition-case observer-error
-                 (run-hooks 'magnus-instances-changed-hook)
-               (error
-                (message "Magnus: rename rollback observer failed: %s"
-                         (error-message-string observer-error))))
-             (signal (car err) (cdr err))))
-        ;; Nothing should clean either path: the transaction owns a rename,
-        ;; not newly allocated data.
-        nil))
-    instance))
-
-(defun magnus-status-rename ()
-  "Rename the archived instance at point, preserving its memory home."
-  (interactive)
-  (if-let ((instance (magnus-status--get-instance-at-point)))
-      (progn
-        (unless (eq (magnus-instance-status instance) 'purged)
-          (user-error "Archive %s before renaming it"
-                      (magnus-instance-name instance)))
-        (let* ((old-name (magnus-instance-name instance))
-               (new-name (read-string "New name: " old-name)))
-          (unless (or (string-empty-p new-name) (string= old-name new-name))
-            (magnus-status--rename-archived-instance instance new-name)
-            (magnus-status-refresh)
-            (message "Renamed '%s' to '%s'" old-name new-name))))
-    (magnus-status--selection-error
-     "an archived agent row" "rename it")))
 
 (defun magnus-status-context ()
   "Open the shared context buffer for the current project."

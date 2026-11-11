@@ -32,8 +32,8 @@ terminal buffers, memory homes, and legacy routing. Runtime ownership is
 first-writer-wins: a stale process, timer, sentinel, or provider callback must
 prove it still owns the exact instance before mutating state.
 
-Creation, project moves, archive, resurrection, and rename acquire resources in
-an explicit order and roll back only what the failing operation acquired. A
+Creation, project moves, archive, and resurrection acquire resources in an
+explicit order and roll back only what the failing operation acquired. A
 replacement process or buffer cannot be overwritten by a delayed callback from
 its predecessor.
 

@@ -368,11 +368,9 @@ Never detach or kill a replacement process that has since claimed BUFFER."
                  (or (null attached) (eq attached process))))
       (ignore-errors (kill-buffer buffer)))))
 
-(defun magnus-codex--spawn-tui
-    (instance prompt &optional marker files-before accepted)
+(defun magnus-codex--spawn-tui (instance prompt &optional marker files-before)
   "Launch INSTANCE's native TUI with PROMPT.
-When MARKER is non-nil, capture its new session against FILES-BEFORE.
-Call ACCEPTED only after the exact runtime submits its launch command."
+When MARKER is non-nil, capture its new session against FILES-BEFORE."
   (let* ((buffer-name (format "*codex:%s*" (magnus-instance-name instance)))
          (default-directory (magnus-instance-directory instance))
          (command (magnus-codex--tui-command instance prompt))
@@ -382,7 +380,6 @@ Call ACCEPTED only after the exact runtime submits its launch command."
          process
          command-timer
          submit-timer
-         command-sent
          started)
     (unwind-protect
         (progn
@@ -412,25 +409,14 @@ Call ACCEPTED only after the exact runtime submits its launch command."
                  (lambda ()
                    (when (magnus-codex--current-process-p process instance)
                      (with-current-buffer buffer
-                       (vterm-send-string command))
-                     (setq command-sent t)))))
+                       (vterm-send-string command))))))
           (setq submit-timer
                 (run-with-timer
                  0.5 nil
                  (lambda ()
-                   (when (and command-sent
-                              (magnus-codex--current-process-p
-                               process instance))
+                   (when (magnus-codex--current-process-p process instance)
                      (with-current-buffer buffer
                        (vterm-send-return))
-                     (when accepted
-                       (condition-case receipt-err
-                           (funcall accepted)
-                         (error
-                          (message
-                           "Magnus: Codex launch receipt failed for %s: %s"
-                           (magnus-instance-name instance)
-                           (error-message-string receipt-err)))))
                      (process-put
                       process 'magnus-codex-ready-timer
                       (run-with-timer
@@ -457,11 +443,8 @@ Call ACCEPTED only after the exact runtime submits its launch command."
         (magnus-codex--rollback-tui-spawn
          instance buffer process command-timer submit-timer)))))
 
-(defun magnus-codex-start
-    (instance &optional initial-message accepted)
-  "Start or resume Codex INSTANCE with optional INITIAL-MESSAGE.
-Call ACCEPTED after the exact resumed command, including INITIAL-MESSAGE, is
-submitted to vterm."
+(defun magnus-codex-start (instance &optional initial-message)
+  "Start or resume Codex INSTANCE with optional INITIAL-MESSAGE."
   (when (magnus-codex-running-p instance)
     (user-error "Codex instance `%s' is already running"
                 (magnus-instance-name instance)))
@@ -480,7 +463,7 @@ submitted to vterm."
                (eq (magnus-instance-status instance) 'stopped))
     (magnus-instances-update instance :buffer nil :status 'stopped))
   (if (magnus-instance-session-id instance)
-      (magnus-codex--spawn-tui instance initial-message nil nil accepted)
+      (magnus-codex--spawn-tui instance initial-message)
     (let* ((marker (magnus-codex--launch-marker instance))
            (prompt (magnus-codex--onboarding-prompt
                     instance initial-message marker))
@@ -839,9 +822,7 @@ turn by the process-local decoder returned by
  'codex
  '((start . magnus-codex-start)
    (resume . magnus-codex-start)
-   (resume-with-message . magnus-codex-start)
    (send . magnus-codex-send)
-   (send-with-acceptance . magnus-codex-send)
    (try-send . magnus-codex-try-send)
    (interrupt . magnus-codex-interrupt)
    (stop . magnus-codex-stop)

@@ -113,7 +113,7 @@ Run `M-x magnus` to open `*magnus*`.
 
 Magnus assigns a friendly name such as `swift-fox` and a durable UUID. The
 name is used for display, memory, and human coordination; the UUID keeps the
-identity stable across rename, archive, and resurrection.
+identity stable across archive and resurrection.
 
 Both providers run directly in `vterm`. Their normal approval prompts, slash
 commands, terminal composers, and streaming output remain available. In a

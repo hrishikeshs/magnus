@@ -16,7 +16,6 @@ These commands are bound directly in `*magnus*`:
 | `V` | Show actions for the review at point |
 | `k` | Archive an agent |
 | `R` | Resurrect an archived agent |
-| `r` | Rename an archived agent and migrate its memory home |
 | `s` / `S` | Suspend or resume a Claude Code agent |
 | `d` | Change project and start a fresh provider session |
 | `m` | Send a message to an agent |
@@ -54,9 +53,8 @@ Each instance has a friendly unique name, a durable UUID, provider session
 metadata, and first-person memory at `.claude/agents/NAME/memory.md`.
 
 Archive stops the current process but preserves the identity. Resurrection
-returns to the provider session when possible. Rename is intentionally
-available only for archived agents; Magnus moves the memory home
-transactionally while the UUID and review history remain unchanged.
+returns to the provider session when possible. Agent names are immutable after
+creation; create a new agent when you want a new identity.
 
 Changing an agent's directory starts a fresh provider session. The identity
 remains the same, but Magnus does not pretend that a session rooted in one

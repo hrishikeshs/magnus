@@ -48,7 +48,6 @@
 ;;   c   - Create a Claude Code instance
 ;;   X   - Create a Codex instance
 ;;   k   - Archive instance
-;;   r   - Rename instance
 ;;   v   - Request an independent review
 ;;   g   - Refresh status
 ;;   ?   - Show help menu
@@ -511,9 +510,9 @@ lowercase keywords, nothing else.\n\nMemory:\n%s" memory))
                     (tags
                      (magnus--sanitize-expertise
                       (plist-get result :output))))
-                ;; A queued archive job may finish after a transactional rename
-                ;; or directory move.  Never publish metadata under its stale
-                ;; identity; the next archive/reindex can submit fresh evidence.
+                ;; A queued archive job may finish after a directory move.
+                ;; Never publish metadata under its stale identity; the next
+                ;; archive/reindex can submit fresh evidence.
                 (when (and current
                            (equal name (magnus-instance-name current))
                            (equal directory

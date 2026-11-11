@@ -72,16 +72,11 @@ it. Register the lifecycle, messaging, trace, and headless operations that its
 CLI supports; Magnus's shared layers continue to provide identity, persistence,
 coordination, attention, and status.
 
-Interactive adapters that support archive resurrection provide both `resume`
-and `send`. An ordinary resume must preserve the provider conversation without
-injecting a Magnus turn; Magnus uses `send` only for a specific pending event
-such as an archived rename. The resume operation returns its terminal buffer
-or records the exact runtime owner during startup. Follow the Codex adapter's
-transaction-owner pattern. Adapters may additionally provide
-`resume-with-message` and `send-with-acceptance` so Magnus can preserve
-first-turn ordering and retain a durable event until the terminal accepts it.
-Both receive the message and an acknowledgement callback after the instance;
-the adapter calls that callback only after its exact runtime accepts the input.
+Interactive adapters that support archive resurrection provide `resume`. It
+must preserve the provider conversation without injecting another Magnus turn,
+and either return its terminal buffer or record the exact runtime owner during
+startup. Follow the Codex adapter's transaction-owner pattern so stale startup
+callbacks cannot claim a replacement terminal.
 
 See [`magnus-provider.el`](magnus-provider.el) for the small dispatch interface
 and [`magnus-provider-codex.el`](magnus-provider-codex.el) for a complete
@@ -89,7 +84,7 @@ interactive and headless adapter.
 
 ### Instance Management
 
-Create, visit, steer, rename, archive, and resurrect named agents such as
+Create, visit, steer, archive, and resurrect named agents such as
 `swift-fox` and `keen-owl`. Each agent has its own terminal and working
 directory. Magnus preserves provider sessions when they are available, so an
 archived collaborator can return with its conversation intact.

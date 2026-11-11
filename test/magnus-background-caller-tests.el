@@ -82,7 +82,8 @@
                            (list default-directory
                                  "calm-owl" "lisp, emacs")))
             (setq indexed 'unchanged)
-            (setf (magnus-instance-name instance) "renamed-owl")
+            (setf (magnus-instance-directory instance)
+                  (expand-file-name "moved-project" default-directory))
             (funcall (plist-get (nth 3 submission) :on-complete)
                      '(:success-p t :output "stale, metadata"))
             (should (eq indexed 'unchanged))))

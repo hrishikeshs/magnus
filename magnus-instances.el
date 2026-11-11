@@ -34,10 +34,7 @@
   (purged-at nil :documentation "Timestamp when instance was archived (purged).")
   ;; Keep newly persisted slots at the end so existing accessor offsets remain
   ;; stable when users reload Magnus in a long-lived Emacs.
-  (kind 'interactive :documentation "Instance kind: interactive or headless.")
-  (pending-rename-from nil
-                       :documentation
-                       "Prior provider-visible name awaiting a rename notice."))
+  (kind 'interactive :documentation "Instance kind: interactive or headless."))
 
 ;;; Registry
 
@@ -150,16 +147,15 @@ this accessor alone can fall beyond the old vector boundary."
   "Return DIRECTORY's physical identity without a trailing separator."
   (directory-file-name (file-truename (expand-file-name directory))))
 
-(defun magnus-instances-name-conflict (directory name &optional except)
-  "Return an instance already using NAME, except EXCEPT.
+(defun magnus-instances-name-conflict (directory name)
+  "Return an instance already using NAME.
 DIRECTORY is accepted for symmetry with adjacent project-scoped reservations.
 Instance display names stay globally unique because terminal buffers and
 legacy name-based compatibility entry points are workspace-global."
   (ignore directory)
   (cl-find-if
    (lambda (instance)
-     (and (not (eq instance except))
-          (string= name (magnus-instance-name instance))))
+     (string= name (magnus-instance-name instance)))
    magnus-instances))
 
 (defun magnus-instances-reserved-names (directory)
@@ -169,11 +165,9 @@ legacy name-based compatibility entry points are workspace-global."
       (setq names (append (funcall function project) names)))
     (delete-dups names)))
 
-(defun magnus-instances--ensure-name-available
-    (directory name &optional except)
-  "Reject NAME when another instance already owns it in DIRECTORY.
-EXCEPT is the instance being renamed, when any."
-  (when (magnus-instances-name-conflict directory name except)
+(defun magnus-instances--ensure-name-available (directory name)
+  "Reject NAME when another instance already owns it in DIRECTORY."
+  (when (magnus-instances-name-conflict directory name)
     (user-error "Magnus instance name %S is already in use" name))
   (when (member name (magnus-instances-reserved-names directory))
     (user-error "Agent name %S is reserved by active project work" name))
@@ -202,17 +196,13 @@ PROPERTIES is a plist of slot names and values."
     (let ((slot (pop properties))
           (value (pop properties)))
       (cl-case slot
-        (:name (setf (magnus-instance-name instance)
-                     (magnus-instances--validate-name value)))
         (:buffer (setf (magnus-instance-buffer instance) value))
         (:status (setf (magnus-instance-status instance) value))
         (:directory (setf (magnus-instance-directory instance) value))
         (:provider (setf (magnus-instance-provider instance) value))
         (:session-id (setf (magnus-instance-session-id instance) value))
         (:previous-session-id (setf (magnus-instance-previous-session-id instance) value))
-        (:purged-at (setf (magnus-instance-purged-at instance) value))
-        (:pending-rename-from
-         (setf (magnus-instance-pending-rename-from instance) value)))))
+        (:purged-at (setf (magnus-instance-purged-at instance) value)))))
   (run-hooks 'magnus-instances-changed-hook)
   instance)
 
@@ -258,8 +248,7 @@ Returns the new instance (not yet added to registry)."
         :session-id (magnus-instance-session-id instance)
         :previous-session-id (magnus-instance-previous-session-id instance)
         :status (magnus-instance-status instance)
-        :purged-at (magnus-instance-purged-at instance)
-        :pending-rename-from (magnus-instance-pending-rename-from instance)))
+        :purged-at (magnus-instance-purged-at instance)))
 
 (defun magnus-instances-deserialize (plist)
   "Deserialize PLIST to an instance."
@@ -280,8 +269,7 @@ Returns the new instance (not yet added to registry)."
    :status (or (plist-get plist :status) 'stopped)
    :session-id (plist-get plist :session-id)
    :previous-session-id (plist-get plist :previous-session-id)
-   :purged-at (plist-get plist :purged-at)
-   :pending-rename-from (plist-get plist :pending-rename-from)))
+   :purged-at (plist-get plist :purged-at)))
 
 (provide 'magnus-instances)
 ;;; magnus-instances.el ends here

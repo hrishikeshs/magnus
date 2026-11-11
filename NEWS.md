@@ -49,9 +49,8 @@ provider-neutral, resource-bounded agent workspace.
   TUI launch instead of a delayed terminal paste, so immediate user input and
   coordination messages cannot overtake it.
 - Archive resurrection and process restart now resume the existing Claude or
-  Codex conversation without injecting another onboarding turn.  A separately
-  requested archived rename delivers only its pending identity change and
-  remains durable until its resumed terminal accepts it.
+  Codex conversation without injecting another onboarding turn.
+- Agent names are immutable after creation; use a new agent for a new identity.
 
 ### Resource hardening
 
