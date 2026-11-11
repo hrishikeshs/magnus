@@ -122,8 +122,9 @@ consumes `ESC` as a Meta prefix.
 
 ## 6. Read the status buffer
 
-The status buffer groups active and archived agents, coordination state,
-review activity, and completed review lineages. Agent rows show provider,
+The status buffer groups active agents, coordination state, review activity,
+and completed review lineages. Archived agents and reviews collapse into
+compact summaries by default; press `U` to reveal them. Agent rows show provider,
 lifecycle, directory, health, attention, active work, and any running review
 badge.
 

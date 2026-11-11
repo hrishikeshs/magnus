@@ -168,6 +168,10 @@ Returns one of: ok, stale, stuck, dead, or nil if unknown."
   (let ((state (gethash (magnus-instance-id instance) magnus-health--state)))
     (plist-get state :health)))
 
+(defun magnus-health-forget-instance (instance)
+  "Forget transient health state owned by INSTANCE."
+  (remhash (magnus-instance-id instance) magnus-health--state))
+
 (defun magnus-health-indicator (instance)
   "Return a propertized health indicator string for INSTANCE."
   (let ((health (magnus-health-get instance)))

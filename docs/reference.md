@@ -15,7 +15,9 @@ These commands are bound directly in `*magnus*`:
 | `v` | Request a review, or show actions for the review at point |
 | `V` | Show actions for the review at point |
 | `k` | Archive an agent |
+| `K` | Forget an archived agent, retaining its historical record |
 | `R` | Resurrect an archived agent |
+| `U` | Show or hide archived agents and reviews |
 | `s` / `S` | Suspend or resume a Claude Code agent |
 | `d` | Change project and start a fresh provider session |
 | `m` | Send a message to an agent |
@@ -37,6 +39,7 @@ The `?` dispatcher additionally exposes:
 |-----|--------|
 | `c` | Create a Claude Code agent |
 | `h` | Create a headless Claude task |
+| `!` | Forget every archived agent after confirmation |
 | `o` | Open the completed review at point |
 | `D` | Run `magnus-doctor` |
 | `C` | Open `.magnus-coord.md` |
@@ -55,6 +58,14 @@ metadata, and first-person memory at `.claude/agents/NAME/memory.md`.
 Archive stops the current process but preserves the identity. Resurrection
 returns to the provider session when possible. Agent names are immutable after
 creation; create a new agent when you want a new identity.
+
+Forget is deliberately separate from archive. It removes Magnus's live
+registry and resumable-session ownership, moves the complete project-local
+`.claude/agents/NAME/` home into
+`~/.magnus/forgotten-agents/PROJECT-HASH/INSTANCE-ID/`, and frees the name.
+Provider transcripts, Git history, coordination history, and completed review
+evidence remain untouched. Magnus refuses to forget an author while an open
+review lineage still depends on that identity.
 
 Changing an agent's directory starts a fresh provider session. The identity
 remains the same, but Magnus does not pretend that a session rooted in one

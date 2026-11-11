@@ -91,6 +91,12 @@ ARGUMENTS are passed to `magnus-review--create'."
     (should (eq (key-binding (kbd "X"))
                 'magnus-transient-create-codex))))
 
+(ert-deftest magnus-status-archive-cleanup-is-directly-discoverable ()
+  (should (eq (lookup-key magnus-status-mode-map (kbd "K"))
+              'magnus-status-forget-archived))
+  (should (eq (lookup-key magnus-status-mode-map (kbd "U"))
+              'magnus-status-toggle-archived)))
+
 (ert-deftest magnus-status-unbound-printable-key-explains-how-to-proceed ()
   (with-temp-buffer
     (magnus-status-mode)
@@ -360,13 +366,46 @@ ARGUMENTS are passed to `magnus-review--create'."
         (should
          (equal
           (substring-no-properties (magnus-status--context-hint nil))
-          "wise-deer (archived) — R resurrect · ? all actions"))
+          (concat "wise-deer (archived) — R resurrect · "
+                  "K forget permanently · ? all actions")))
         (forward-line 1)
         (should
          (equal
           (substring-no-properties (magnus-status--context-hint nil))
           (concat "Magnus — n/p navigate · c create Claude · "
                   "X create Codex · ? all actions")))))))
+
+(ert-deftest magnus-status-collapses-archived-history-by-default ()
+  (let* ((instance
+          (magnus-instance--create
+           :id "archived-agent" :name "wise-deer" :directory "/tmp/project"
+           :status 'purged :purged-at (float-time)))
+         (review
+          (magnus-review--create
+           :id "archived-review" :reviewer-name "keen-owl"
+           :reviewer-provider 'codex :author-name "wise-deer"
+           :lifecycle 'archived :created-at 1 :updated-at 3 :archived-at 3
+           :rounds (list (magnus-test-status--completed-round))))
+         (magnus-instances (list instance))
+         (magnus-reviews (list review)))
+    (cl-letf (((symbol-function 'magnus--agents-index-get)
+               (lambda (&rest _arguments) nil)))
+      (with-temp-buffer
+        (let ((magnus-status-show-archived nil))
+          (magnus-status--insert-reviews)
+          (magnus-status--insert-purged))
+        (let ((text (buffer-string)))
+          (should (string-match-p "1 archived review hidden" text))
+          (should (string-match-p "1 archived agent hidden" text))
+          (should-not (string-match-p "keen-owl" text))
+          (should-not (string-match-p "wise-deer" text))))
+      (with-temp-buffer
+        (let ((magnus-status-show-archived t))
+          (magnus-status--insert-reviews)
+          (magnus-status--insert-purged))
+        (let ((text (buffer-string)))
+          (should (string-match-p "keen-owl" text))
+          (should (string-match-p "wise-deer" text)))))))
 
 (ert-deftest magnus-instances-create-rejects-a-workspace-name-collision ()
   (let* ((directory (make-temp-file "magnus-instance-name-" t))

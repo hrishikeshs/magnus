@@ -30,6 +30,7 @@
 (declare-function vterm-send-string "vterm" (string &optional paste-p))
 (defvar magnus-buffer-name)
 (defvar magnus-process-ready-hook nil)
+(defvar magnus-process--instance-id nil)
 (defvar magnus-process--transaction-runtime-buffer nil)
 
 (defcustom magnus-codex-executable "codex"
@@ -396,7 +397,11 @@ When MARKER is non-nil, capture its new session against FILES-BEFORE."
             (user-error "Could not start a vterm for Codex instance `%s'"
                         (magnus-instance-name instance)))
           (with-current-buffer buffer
-            (setq-local magnus-codex--instance instance))
+            (setq-local magnus-codex--instance instance)
+            ;; Share the provider-neutral durable ownership tag used for exact
+            ;; terminal recovery and cleanup.
+            (setq-local magnus-process--instance-id
+                        (magnus-instance-id instance)))
           (magnus-instances-update instance :buffer buffer :status 'running)
           (magnus-codex--setup-tui-sentinel instance buffer)
           (when marker

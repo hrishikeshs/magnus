@@ -395,11 +395,13 @@ Compares time since last visit against twice the adaptive interval."
 (defun magnus-coord-attention-save ()
   "Save attention data to disk."
   (setq magnus-coord--attention-save-timer nil)
-  (when (and (bound-and-true-p magnus-attention-data-file)
-             (hash-table-count magnus-coord--attention-data))
-    (let ((alist nil))
+  (when (bound-and-true-p magnus-attention-data-file)
+    (let ((alist nil)
+          (directory (file-name-directory magnus-attention-data-file)))
       (maphash (lambda (k v) (push (cons k v) alist))
                magnus-coord--attention-data)
+      (unless (file-directory-p directory)
+        (make-directory directory t))
       (with-temp-file magnus-attention-data-file
         (insert ";; Magnus attention data - do not edit manually\n")
         (pp alist (current-buffer))))))
@@ -912,6 +914,24 @@ Coalesces pending lifecycle state and re-arms the idle timer."
 (defvar magnus-coord--context-warned (make-hash-table :test 'equal)
   "Hash table of instance-id to t for agents already warned about context.
 Cleared when the agent's session changes (restart or compaction).")
+
+(defun magnus-coord-forget-instance-state (instance)
+  "Forget transient and adaptive coordination state owned by INSTANCE.
+Project-wide coordination history, watchers, retrospectives, and message
+deduplication remain intact."
+  (let ((id (magnus-instance-id instance))
+        (name (magnus-instance-name instance)))
+    (dolist (table (list magnus-coord--buffer-ticks
+                         magnus-coord--last-nudge
+                         magnus-coord--presence-states
+                         magnus-coord--context-warned))
+      (remhash id table))
+    (remhash name magnus-coord--attention-data)
+    (magnus-coord--maintain-presence-retry)
+    (when (timerp magnus-coord--attention-save-timer)
+      (cancel-timer magnus-coord--attention-save-timer)
+      (setq magnus-coord--attention-save-timer nil))
+    (magnus-coord-attention-save)))
 
 (defun magnus-coord-check-context-all ()
   "Check context utilization for all running agents.

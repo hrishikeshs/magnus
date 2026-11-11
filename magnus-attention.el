@@ -164,6 +164,18 @@ When the instance is the first in queue, focus its buffer immediately."
       ;; Focus next in queue if any
       (magnus-attention--focus-next))))
 
+(defun magnus-attention-forget-instance (instance)
+  "Release every attention-queue reference owned by INSTANCE."
+  (let ((id (magnus-instance-id instance)))
+    ;; A pending focus timer closes over the old instance object.  When this
+    ;; instance currently has the floor, revoke that callback before handing
+    ;; the floor to the next queued agent.
+    (when (and (equal magnus-attention-current id)
+               (timerp magnus-attention--focus-timer))
+      (cancel-timer magnus-attention--focus-timer)
+      (setq magnus-attention--focus-timer nil))
+    (magnus-attention-release instance)))
+
 (defun magnus-attention-release-current ()
   "Release the current instance from attention (call when done with it)."
   (interactive)

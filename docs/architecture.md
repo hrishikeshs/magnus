@@ -37,6 +37,14 @@ explicit order and roll back only what the failing operation acquired. A
 replacement process or buffer cannot be overwritten by a delayed callback from
 its predecessor.
 
+Forgetting is a separate terminal transition available only to archived
+instances. Magnus first copies the complete project-local agent home and a
+serialized identity record into
+`~/.magnus/forgotten-agents/PROJECT-HASH/INSTANCE-ID/`, then atomically removes
+the live registry entry. A failed state write restores the original home and
+registry. Provider transcripts, Git evidence, and coordination history remain
+outside this transaction.
+
 Headless tasks have a durable kind distinct from interactive agents. A restored
 headless record never becomes an interactive terminal by accident.
 
@@ -101,8 +109,8 @@ See [Independent reviews](reviews.md) for the user-facing lifecycle.
 ## Persistence and project files
 
 The agent registry and provider-session metadata live in
-`~/.magnus/state.el`. Reviews, context, URL cache, expertise data, and attention
-data have separate paths below `~/.magnus/`.
+`~/.magnus/state.el`. Forgotten agent homes, reviews, context, URL cache,
+expertise data, and attention data have separate paths below `~/.magnus/`.
 
 Instance state and review storage have the strongest boundary checks: Magnus
 validates records before replacing live state, rejects unsafe identities and

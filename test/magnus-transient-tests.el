@@ -146,6 +146,15 @@ layout representation, which differs between supported Transient releases."
 (ert-deftest magnus-transient-review-menus-expose-the-complete-workflow ()
   (should
    (magnus-test-transient--suffix-runs-command-p
+    'magnus-dispatch "K" 'magnus-status-forget-archived))
+  (should
+   (magnus-test-transient--suffix-runs-command-p
+    'magnus-dispatch "!" 'magnus-status-forget-all-archived))
+  (should
+   (magnus-test-transient--suffix-runs-command-p
+    'magnus-dispatch "U" 'magnus-status-toggle-archived))
+  (should
+   (magnus-test-transient--suffix-runs-command-p
     'magnus-dispatch "v" 'magnus-review-request-dispatch))
   (should
    (magnus-test-transient--suffix-runs-command-p
@@ -164,7 +173,7 @@ layout representation, which differs between supported Transient releases."
          ("i" magnus-transient-review-interrupt
           "Interrupt active work" magnus-transient--review-interrupt-inapt-p)
          ("k" magnus-transient-review-archive
-          "Archive" magnus-transient--review-archive-inapt-p)))
+          "Archive and hide" magnus-transient--review-archive-inapt-p)))
     (should
      (magnus-test-transient--suffix-runs-command-p
       'magnus-review-actions-menu (car entry) (cadr entry)))

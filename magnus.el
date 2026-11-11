@@ -48,6 +48,8 @@
 ;;   c   - Create a Claude Code instance
 ;;   X   - Create a Codex instance
 ;;   k   - Archive instance
+;;   K   - Forget archived instance
+;;   U   - Show or hide archived items
 ;;   v   - Request an independent review
 ;;   g   - Refresh status
 ;;   ?   - Show help menu
@@ -448,13 +450,12 @@ Returns (NAME . REASON) if a valid match was found, or nil."
 
 (defun magnus--agents-index-save ()
   "Save the agents index to disk."
-  (when magnus--agents-index
-    (let ((dir (file-name-directory magnus-agents-index-file)))
-      (unless (file-directory-p dir)
-        (make-directory dir t)))
-    (with-temp-file magnus-agents-index-file
-      (insert ";; Magnus agent expertise index - do not edit manually\n")
-      (pp magnus--agents-index (current-buffer)))))
+  (let ((dir (file-name-directory magnus-agents-index-file)))
+    (unless (file-directory-p dir)
+      (make-directory dir t)))
+  (with-temp-file magnus-agents-index-file
+    (insert ";; Magnus agent expertise index - do not edit manually\n")
+    (pp magnus--agents-index (current-buffer))))
 
 (defun magnus--agents-index-get (directory name)
   "Get expertise tags for agent NAME in DIRECTORY."
@@ -472,6 +473,21 @@ Returns (NAME . REASON) if a valid match was found, or nil."
       (push (cons directory (list (cons name tags)))
             magnus--agents-index)))
   (magnus--agents-index-save))
+
+(defun magnus--agents-index-remove (directory name)
+  "Remove agent NAME in DIRECTORY from the expertise index."
+  (let ((dir-entry (assoc directory magnus--agents-index))
+        removed)
+    (when dir-entry
+      (when-let ((agent-entry (assoc name (cdr dir-entry))))
+        (setq removed (cdr agent-entry))
+        (setcdr dir-entry (delq agent-entry (cdr dir-entry))))
+      (unless (cdr dir-entry)
+        (setq magnus--agents-index (delq dir-entry magnus--agents-index))))
+    ;; Persist an empty index too; otherwise its final deleted entry returns on
+    ;; the next Emacs startup.
+    (magnus--agents-index-save)
+    removed))
 
 (defun magnus--agents-index-update (instance)
   "Update the expertise index for INSTANCE asynchronously.
@@ -618,6 +634,7 @@ them now; new agents populate once their memory file exists."
             (require 'magnus-review)
             (require 'magnus-review-controller)
             (require 'magnus-review-ui)
+            (require 'magnus-forget)
             (require 'magnus-status)
             (require 'magnus-transient)
             (magnus--migrate-data-files)

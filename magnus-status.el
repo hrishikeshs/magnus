@@ -24,6 +24,7 @@
 (require 'magnus-attention)
 (require 'magnus-health)
 (require 'magnus-review)
+(require 'magnus-forget)
 
 (declare-function magnus-dispatch "magnus-transient")
 (declare-function magnus-review-request-dispatch "magnus-transient")
@@ -149,6 +150,14 @@ asynchronous messages instead of replacing them."
   :type 'boolean
   :group 'magnus)
 
+(defcustom magnus-status-show-archived nil
+  "Whether the Magnus status buffer expands archived agents and reviews.
+When nil, compact summary rows keep archived history discoverable without
+letting it dominate the working view.  Toggle this interactively with
+`magnus-status-toggle-archived'."
+  :type 'boolean
+  :group 'magnus)
+
 (defconst magnus-status--review-animation-frames ["|" "/" "-" "\\"]
   "Fixed-width frames used by the active-review status badge.")
 
@@ -214,6 +223,7 @@ truthful.  CALLBACK is accepted for ElDoc's documentation-function protocol."
                     (concat
                      "%s (archived) — "
                      "\\[magnus-status-resurrect-purged] resurrect · "
+                     "\\[magnus-status-forget-archived] forget permanently · "
                      "\\[magnus-dispatch] all actions")
                     (magnus-instance-name instance))
                  (format
@@ -275,6 +285,7 @@ user to its actions instead."
     (define-key map (kbd "c") #'magnus-status-create)
     (define-key map (kbd "X") #'magnus-transient-create-codex)
     (define-key map (kbd "k") #'magnus-status-archive)
+    (define-key map (kbd "K") #'magnus-status-forget-archived)
     (define-key map (kbd "R") #'magnus-status-resurrect-purged)
     (define-key map (kbd "s") #'magnus-status-suspend)
     (define-key map (kbd "S") #'magnus-status-resume)
@@ -291,6 +302,7 @@ user to its actions instead."
     (define-key map (kbd "a") #'magnus-attention-next)
     (define-key map (kbd "A") #'magnus-attention-show-queue)
     (define-key map (kbd "P") #'magnus-status-archive-all)
+    (define-key map (kbd "U") #'magnus-status-toggle-archived)
     (define-key map (kbd "z") #'magnus-coord-toggle-dnd)
     (define-key map (kbd "F") #'magnus-retro)
     (define-key map (kbd "?") #'magnus-dispatch)
@@ -481,7 +493,8 @@ user to its actions instead."
   (let ((unread
          (cl-count-if
           (lambda (review)
-            (eq (magnus-review-read-state review) 'unread))
+            (and (not (eq (magnus-review-lifecycle review) 'archived))
+                 (eq (magnus-review-read-state review) 'unread)))
           (magnus-review-list))))
     (when (> unread 0)
       (insert
@@ -509,8 +522,12 @@ user to its actions instead."
           (progn
             (insert (propertize "  No active instances.\n"
                                 'face 'magnus-status-empty-hint))
-            (insert (propertize "  Press 'c' for Claude, 'X' for Codex, or 'R' to resurrect.\n"
-                                'face 'magnus-status-empty-hint)))
+            (insert
+             (propertize
+              (if magnus-status-show-archived
+                  "  Press 'c' for Claude, 'X' for Codex, or 'R' to resurrect.\n"
+                "  Press 'c' for Claude, 'X' for Codex, or 'U' to show archived agents.\n")
+              'face 'magnus-status-empty-hint)))
         (dolist (instance instances)
           (magnus-status--insert-instance instance))))))
 
@@ -542,10 +559,18 @@ user to its actions instead."
           (dolist (review reviews)
             (magnus-status--insert-review review))
           (when archived
-            (insert (propertize "  Archived reviews\n"
-                                'face 'magnus-status-empty-hint))
-            (dolist (review archived)
-              (magnus-status--insert-review review))))
+            (if magnus-status-show-archived
+                (progn
+                  (insert (propertize "  Archived reviews\n"
+                                      'face 'magnus-status-empty-hint))
+                  (dolist (review archived)
+                    (magnus-status--insert-review review)))
+              (insert
+               (propertize
+                (format "  %d archived review%s hidden — press 'U' to show\n"
+                        (length archived)
+                        (if (= (length archived) 1) "" "s"))
+                'face 'magnus-status-empty-hint)))))
       (insert
        (propertize
         "  No reviews yet. On an agent, press 'v', then RET, to request one.\n"
@@ -796,13 +821,20 @@ ephemeral round and COMPLETED is the latest successful round."
                        'magnus-instance-id (magnus-instance-id instance))))
 
 (defun magnus-status--insert-purged ()
-  "Insert the purged instances section."
+  "Insert or summarize the archived instances section."
   (let ((purged (magnus-instances-purged-list)))
     (when purged
       (insert "\n")
-      (insert (propertize "Purged\n" 'face 'magnus-status-section-heading))
-      (dolist (instance purged)
-        (magnus-status--insert-purged-instance instance)))))
+      (insert (propertize "Archived agents\n"
+                          'face 'magnus-status-section-heading))
+      (if magnus-status-show-archived
+          (dolist (instance purged)
+            (magnus-status--insert-purged-instance instance))
+        (insert
+         (propertize
+          (format "  %d archived agent%s hidden — press 'U' to show\n"
+                  (length purged) (if (= (length purged) 1) "" "s"))
+          'face 'magnus-status-empty-hint))))))
 
 (defun magnus-status--insert-purged-instance (instance)
   "Insert a line for purged INSTANCE."
@@ -1067,6 +1099,37 @@ Stops the process but preserves the session ID for later resurrection."
     (magnus-status--selection-error
      "an archived agent row" "resurrect it")))
 
+(defun magnus-status-forget-archived ()
+  "Forget the archived agent at point while retaining a historical record."
+  (interactive)
+  (if-let ((instance (magnus-status--get-instance-at-point)))
+      (if (eq (magnus-instance-status instance) 'purged)
+          (let ((destination (magnus-forget-record-directory instance)))
+            (when
+                (yes-or-no-p
+                 (format
+                  (concat "Forget archived agent '%s'? Magnus will remove its "
+                          "resumable identity and preserve its full home at %s. ")
+                  (magnus-instance-name instance)
+                  (abbreviate-file-name destination)))
+              (magnus-forget-archived-instances (list instance))
+              (magnus-status-refresh)
+              (message "Forgot '%s' — history retained at %s"
+                       (magnus-instance-name instance)
+                       (abbreviate-file-name destination))))
+        (user-error "Archive %s before forgetting it"
+                    (magnus-instance-name instance)))
+    (magnus-status--selection-error
+     "an archived agent row" "forget it permanently")))
+
+(defun magnus-status-toggle-archived ()
+  "Toggle expansion of archived agents and review lineages."
+  (interactive)
+  (setq magnus-status-show-archived (not magnus-status-show-archived))
+  (magnus-status-refresh)
+  (message "%s archived agents and reviews"
+           (if magnus-status-show-archived "Showing" "Hiding")))
+
 (defun magnus-status-context ()
   "Open the shared context buffer for the current project."
   (interactive)
@@ -1151,6 +1214,27 @@ Stops the process but preserves the session ID for later resurrection."
           (magnus-process-archive instance))
         (magnus-status-refresh)
         (message "Archived %d instance%s" count (if (= count 1) "" "s"))))))
+
+(defun magnus-status-forget-all-archived ()
+  "Forget every archived agent after one explicit confirmation."
+  (interactive)
+  (let* ((archived (magnus-instances-purged-list))
+         (count (length archived)))
+    (if (zerop count)
+        (user-error "No archived agents to forget")
+      (when
+          (yes-or-no-p
+           (format
+            (concat "Forget all %d archived agent%s? Magnus will remove their "
+                    "resumable identities and preserve their full homes under %s. ")
+            count (if (= count 1) "" "s")
+            (abbreviate-file-name magnus-forgotten-agents-directory)))
+        (magnus-forget-archived-instances archived)
+        (magnus-status-refresh)
+        (message "Forgot %d archived agent%s; history retained under %s"
+                 count (if (= count 1) "" "s")
+                 (abbreviate-file-name
+                  magnus-forgotten-agents-directory))))))
 
 (provide 'magnus-status)
 ;;; magnus-status.el ends here

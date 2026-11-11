@@ -144,7 +144,9 @@ review actions."
    (1 "X" "Create Codex agent" magnus-transient-create-codex)
    (1 "h" "Create headless Claude task" magnus-transient-create-headless)
    (1 "k" "Archive instance" magnus-status-archive)
-   (1 "R" "Resurrect purged" magnus-status-resurrect-purged)
+   (1 "K" "Forget archived instance" magnus-status-forget-archived)
+   (1 "!" "Forget all archived instances" magnus-status-forget-all-archived)
+   (1 "R" "Resurrect archived" magnus-status-resurrect-purged)
    (1 "s" "Suspend instance" magnus-status-suspend)
    (1 "S" "Resume instance" magnus-status-resume)
    (1 "d" "Change directory" magnus-status-chdir)
@@ -176,6 +178,7 @@ review actions."
    (1 "p" "Previous item" magnus-status-previous)]
   [1 "Buffer"
    (1 "g" "Refresh" magnus-status-refresh)
+   (1 "U" "Show/hide archived" magnus-status-toggle-archived)
    (1 "D" "Diagnose installation" magnus-doctor)
    (1 "q" "Quit" quit-window)])
 
@@ -314,7 +317,7 @@ review actions."
     :inapt-if magnus-transient--review-fresh-session-inapt-p)
    (1 "i" "Interrupt active work" magnus-transient-review-interrupt
     :inapt-if magnus-transient--review-interrupt-inapt-p)
-   (1 "k" "Archive" magnus-transient-review-archive
+   (1 "k" "Archive and hide" magnus-transient-review-archive
     :inapt-if magnus-transient--review-archive-inapt-p)])
 
 (defun magnus-review-actions (&optional review round)
@@ -487,6 +490,7 @@ or the best status-buffer project directory."
    :description magnus-transient--instance-description
    (1 "RET" "Visit" magnus-status-visit)
    (1 "k" "Archive" magnus-status-archive)
+   (1 "K" "Forget archived" magnus-status-forget-archived)
    (1 "R" "Resurrect" magnus-status-resurrect-purged)
    (1 "s" "Suspend" magnus-status-suspend)
    (1 "S" "Resume" magnus-status-resume)

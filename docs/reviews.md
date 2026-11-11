@@ -101,9 +101,11 @@ retain its identity if it resurfaces later.
 Missing or corrupt prior evidence blocks the next round rather than silently
 starting a disconnected review.
 
-When that body of work is finished, archive the review lineage. A future task
-gets a new reviewer lineage even if expertise matching chooses the same named
-specialist.
+When that body of work is finished, archive the review lineage. Archived
+lineages are hidden from the working view by default; press `U` in `*magnus*`
+to reveal them. Their reports and immutable evidence remain available. A
+future task gets a new reviewer lineage even if expertise matching chooses the
+same named specialist.
 
 ## Review reader
 

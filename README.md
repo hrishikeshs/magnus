@@ -84,10 +84,12 @@ interactive and headless adapter.
 
 ### Instance Management
 
-Create, visit, steer, archive, and resurrect named agents such as
+Create, visit, steer, archive, resurrect, and forget named agents such as
 `swift-fox` and `keen-owl`. Each agent has its own terminal and working
 directory. Magnus preserves provider sessions when they are available, so an
-archived collaborator can return with its conversation intact.
+archived collaborator can return with its conversation intact. Forgetting an
+archived agent removes it from the working set while retaining its memory and
+session metadata under `~/.magnus/forgotten-agents/` for historical recovery.
 
 ### Agent Coordination
 
