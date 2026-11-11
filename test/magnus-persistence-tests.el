@@ -113,6 +113,28 @@
     (plist-put invalid :kind 'background)
     (should-error (magnus-persistence--deserialize-state (list invalid)))))
 
+(ert-deftest magnus-persistence-round-trips-and-validates-pending-rename ()
+  "An undelivered provider-visible rename survives restart safely."
+  (let* ((instance (magnus-persistence-tests--instance "rename"))
+         (_ (setf (magnus-instance-pending-rename-from instance) "old-name"))
+         (serialized (magnus-instances-serialize instance))
+         (restored (magnus-persistence--deserialize-record serialized 1))
+         (invalid (copy-sequence serialized))
+         (completed (copy-sequence serialized)))
+    (should (equal (plist-get serialized :pending-rename-from) "old-name"))
+    (should
+     (equal (magnus-instance-pending-rename-from restored) "old-name"))
+    (setq invalid
+          (plist-put invalid :pending-rename-from "../outside"))
+    (should-error (magnus-persistence--deserialize-state (list invalid)))
+    ;; A name restored to its provider-visible value has no pending delta.
+    (setq completed
+          (plist-put completed :pending-rename-from
+                     (plist-get completed :name)))
+    (should-not
+     (magnus-instance-pending-rename-from
+      (magnus-persistence--deserialize-record completed 1)))))
+
 (ert-deftest magnus-persistence-repairs-obsolete-creation-metadata ()
   "Nonessential creation timestamps cannot discard otherwise valid agents."
   (let* ((first

@@ -197,8 +197,8 @@ and authorization boundary. Its default value, nil, uses Magnus's standard
 guidance; a string replaces that guidance for Claude Code, and an empty string
 omits it there. Codex and third-party adapters always retain Magnus's standard
 response guidance. The setting affects future onboarding messages, not
-messages already delivered or a provider session already in progress. Magnus
-resends the complete current onboarding after an archived agent is resurrected
-while preserving that agent's existing provider conversation.
+messages already delivered or a provider session already in progress. Archive
+resurrection and process restart transparently resume the existing provider
+conversation without replaying onboarding.
 
 Use `M-x customize-group RET magnus RET` for every option.

@@ -183,6 +183,47 @@ DATE defaults to the original deterministic test fixture date."
       (magnus-test--delete-terminal terminal)
       (delete-directory directory t))))
 
+(ert-deftest magnus-codex-resume-message-acknowledges-command-submission ()
+  (let* ((directory (make-temp-file "magnus-codex-resume-receipt-" t))
+         (instance (magnus-instances-create directory "resumed-codex" 'codex))
+         (terminal (magnus-test--codex-tui instance))
+         (buffer (car terminal))
+         (accepted 0)
+         timers
+         sent
+         returned)
+    (unwind-protect
+        (let ((magnus-instances-changed-hook nil))
+          (magnus-instances-update instance :session-id "codex-session")
+          (cl-letf
+              (((symbol-function 'magnus-terminal-create-buffer)
+                (lambda (&rest _arguments) buffer))
+               ((symbol-function 'magnus-codex--setup-tui-sentinel) #'ignore)
+               ((symbol-function 'vterm-send-string)
+                (lambda (text &optional _paste-p) (setq sent text)))
+               ((symbol-function 'vterm-send-return)
+                (lambda () (setq returned t)))
+               ((symbol-function 'run-with-timer)
+                (lambda (seconds _repeat function &rest arguments)
+                  (push (list seconds function arguments) timers)
+                  nil)))
+            (magnus-codex--spawn-tui
+             instance "identity delta" nil nil
+             (lambda () (cl-incf accepted)))
+            (should (= accepted 0))
+            (let ((command-timer (assoc 0.1 timers))
+                  (submit-timer (assoc 0.5 timers)))
+              (should command-timer)
+              (should submit-timer)
+              (apply (cadr command-timer) (caddr command-timer))
+              (should (string-match-p "identity.*delta" sent))
+              (should (= accepted 0))
+              (apply (cadr submit-timer) (caddr submit-timer)))
+            (should returned)
+            (should (= accepted 1))))
+      (magnus-test--delete-terminal terminal)
+      (delete-directory directory t))))
+
 (ert-deftest magnus-codex-direct-start-rolls-back-failed-tui-replacement ()
   (let* ((directory (make-temp-file "magnus-codex-start-rollback-" t))
          (instance (magnus-instances-create

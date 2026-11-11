@@ -1083,6 +1083,16 @@ If either the registry notification or home migration fails, restore both."
   (magnus-instances--ensure-name-available
    (magnus-instance-directory instance) new-name instance)
   (let* ((old-name (magnus-instance-name instance))
+         (original-pending-rename
+          (magnus-instance-pending-rename-from instance))
+         (next-pending-rename
+          (when (magnus-instance-session-id instance)
+            (cond
+             ((and original-pending-rename
+                   (string= new-name original-pending-rename))
+              nil)
+             (original-pending-rename original-pending-rename)
+             (t old-name))))
          (directory (magnus-instance-directory instance))
          (old-home
           (directory-file-name
@@ -1106,7 +1116,9 @@ If either the registry notification or home migration fails, restore both."
                   (make-directory (file-name-directory new-home) t)
                   (rename-file old-home new-home)
                   (setq moved t))
-                (setf (magnus-instance-name instance) new-name)
+                (setf (magnus-instance-name instance) new-name
+                      (magnus-instance-pending-rename-from instance)
+                      next-pending-rename)
                 (run-hooks 'magnus-instances-changed-hook)
                 ;; During a normal initialized session, make the home move and
                 ;; registry rename durable before reporting success.  The
@@ -1117,7 +1129,9 @@ If either the registry notification or home migration fails, restore both."
                            (fboundp 'magnus-persistence-save))
                   (magnus-persistence-save)))
             (error
-             (setf (magnus-instance-name instance) old-name)
+             (setf (magnus-instance-name instance) old-name
+                   (magnus-instance-pending-rename-from instance)
+                   original-pending-rename)
              (when moved
                (condition-case rollback-error
                    (rename-file new-home old-home)

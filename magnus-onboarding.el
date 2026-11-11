@@ -42,10 +42,10 @@ coordination, and authorization instructions remain.  An empty string omits
 user-facing guidance from Claude Code onboarding entirely.  Codex and other
 providers always retain Magnus's default response guidance.
 
-The selected instructions are sent when Magnus onboards a Claude Code agent,
-including after an archived agent is resurrected.  Changing this option does
-not modify messages already delivered or a provider session already in
-progress."
+The selected instructions are sent when Magnus creates a new Claude Code
+provider session.  Resuming an existing session is conversationally
+transparent, so changing this option does not rewrite or append to sessions
+already in progress, including after archive resurrection."
   :type '(choice (const :tag "Use Magnus default" nil)
                  (string :tag "Custom Claude Code onboarding instructions"))
   :group 'magnus)

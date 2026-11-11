@@ -118,15 +118,23 @@ the outer transaction's rollback at a later replacement."
             (cons buffer process))))
 
 (defun magnus-process--run-ready-hook
-    (instance &optional owner-buffer owner-process)
+    (instance &optional owner-buffer owner-process accepted)
   "Run the ready hook when INSTANCE still has its expected terminal owner.
 OWNER-BUFFER and OWNER-PROCESS, when non-nil, prevent a delayed callback from
-publishing readiness for a replacement runtime."
+publishing readiness for a replacement runtime.  ACCEPTED, when non-nil, runs
+first to acknowledge launch-time input owned by that exact runtime."
   (let* ((current-instance (magnus-process--current-instance instance))
          (buffer (or owner-buffer
                      (magnus-instance-buffer current-instance))))
     (when (magnus-process--runtime-owner-p
            current-instance buffer owner-process)
+      (when accepted
+        (condition-case err
+            (funcall accepted)
+          (error
+           (message "Magnus: ready receipt failed for %s: %s"
+                    (magnus-instance-name current-instance)
+                    (error-message-string err)))))
       (run-hook-with-args 'magnus-process-ready-hook current-instance))))
 
 ;;; Process creation
@@ -480,6 +488,65 @@ summon context when the agent was brought back by another agent."
                         prev-session))))
     (magnus-onboarding-prompt instance prev-trace summon-context)))
 
+(defun magnus-process--pending-resume-notice (instance)
+  "Return INSTANCE's event-specific resume notice, or nil.
+Ordinary provider-session restoration is deliberately silent.  A rename is a
+separate user action, so preserve only that undelivered identity delta rather
+than replaying stable onboarding instructions."
+  (when-let ((old-name (magnus-instance-pending-rename-from instance)))
+    (format
+     (concat
+      "Magnus identity update: this existing session was renamed from %s to "
+      "%s. Its durable Magnus UUID remains %s. Use %s as your display name "
+      "and %s as your agent home from now on.")
+     old-name
+     (magnus-instance-name instance)
+     (magnus-instance-id instance)
+     (magnus-instance-name instance)
+     (file-name-directory (magnus-process--agent-memory-path instance)))))
+
+(defun magnus-process--acknowledge-pending-rename
+    (instance expected-old-name expected-new-name)
+  "Clear INSTANCE's exact delivered rename event.
+EXPECTED-OLD-NAME and EXPECTED-NEW-NAME fence delayed delivery receipts from
+clearing a newer rename of the same durable instance."
+  (let ((current (magnus-process--current-instance instance)))
+    (when (and (equal (magnus-instance-pending-rename-from current)
+                      expected-old-name)
+               (equal (magnus-instance-name current) expected-new-name))
+      (magnus-instances-update current :pending-rename-from nil))))
+
+(defun magnus-process--acknowledge-pending-rename-safely
+    (instance expected-old-name expected-new-name)
+  "Acknowledge INSTANCE's exact rename without hiding a live runtime.
+This variant is for non-transactional visit paths: a persistence hook failure
+must not turn a successfully resumed terminal into an apparent start failure."
+  (condition-case err
+      (magnus-process--acknowledge-pending-rename
+       instance expected-old-name expected-new-name)
+    (error
+     (message "Magnus: could not persist delivered rename for %s: %s"
+              expected-new-name (error-message-string err)))))
+
+(defun magnus-process--queue-pending-rename-with-acceptance
+    (instance notice expected-old-name expected-new-name)
+  "Queue NOTICE through INSTANCE and clear its rename only after acceptance."
+  (magnus-provider-call
+   instance 'send-with-acceptance notice
+   (lambda ()
+     (magnus-process--acknowledge-pending-rename-safely
+      instance expected-old-name expected-new-name))))
+
+(defun magnus-process--queue-local-pending-rename-with-acceptance
+    (instance notice expected-old-name expected-new-name)
+  "Queue local NOTICE and clear its rename only after terminal acceptance."
+  (magnus-terminal-submit
+   instance notice
+   (lambda ()
+     (magnus-process--acknowledge-pending-rename-safely
+      instance expected-old-name expected-new-name))
+   :settle-delay 0.1 :scope 'magnus-resume-rename))
+
 (defun magnus-process--onboarding-returning
     (name prev-trace summon-context &optional instance)
   "Generate onboarding for a returning agent NAME.
@@ -827,10 +894,9 @@ The session ID is preserved so the agent can be resurrected later
   (magnus--agents-index-update instance))
 
 (defun magnus-process-resurrect-purged (instance)
-  "Resurrect a purged INSTANCE and resend its current Magnus onboarding.
-The provider session is resumed so its conversation survives.  The complete
-onboarding is regenerated so identity, coordination, authorization, and the
-configured user-facing guidance are current."
+  "Resurrect purged INSTANCE by transparently resuming its provider session.
+No conversational turn is injected for an ordinary archive lifecycle change.
+When a separate archived rename is pending, deliver only that identity delta."
   (when (magnus-process--headless-p instance)
     (user-error "Headless task '%s' cannot be resurrected interactively"
                 (magnus-instance-name instance)))
@@ -843,10 +909,19 @@ configured user-facing guidance are current."
          (original-status (magnus-instance-status instance))
          (original-buffer (magnus-instance-buffer instance))
          (original-purged-at (magnus-instance-purged-at instance))
+         (original-pending-rename
+          (magnus-instance-pending-rename-from instance))
+         (resume-notice (magnus-process--pending-resume-notice instance))
+         (resume-with-notice
+          (and external resume-notice
+               (magnus-provider-operation-p
+                instance 'resume-with-message)))
+         (rename-target (magnus-instance-name instance))
          (magnus-process--transaction-runtime-buffer (list nil))
          coordination-attempted
          runtime-attempted
          runtime-superseded
+         rename-acknowledged
          committed)
     (unless session-id
       (user-error "No session ID for '%s' — cannot resume"
@@ -862,7 +937,14 @@ configured user-facing guidance are current."
           (if external
               (progn
                 (let ((resumed-runtime
-                       (magnus-provider-call instance 'resume)))
+                       (if resume-with-notice
+                           (magnus-provider-call
+                            instance 'resume-with-message resume-notice
+                            (lambda ()
+                              (magnus-process--acknowledge-pending-rename-safely
+                               instance original-pending-rename
+                               rename-target)))
+                         (magnus-provider-call instance 'resume))))
                   ;; Older adapters may return their terminal without using
                   ;; Magnus's transaction recorder.  Adopt that exact return
                   ;; value when possible; first-writer-wins preserves a more
@@ -897,13 +979,30 @@ configured user-facing guidance are current."
                      "Provider `%s' lost exact runtime ownership while restoring `%s'"
                      (magnus-instance-provider current-instance)
                      (magnus-instance-name current-instance)))
-                  ;; External providers own their input transport.  Queue the
-                  ;; complete shared onboarding through that transport so
-                  ;; Codex retains its single-writer and readiness guarantees.
-                  (magnus-provider-call
-                   current-instance 'send
-                   (magnus-process--onboarding-message current-instance))))
-            (magnus-process--spawn-with-session instance session-id))
+                  ;; Starting the exact provider session is the complete
+                  ;; restoration.  Stable onboarding already lives in that
+                  ;; conversation.  A rename is a separate pending event and
+                  ;; uses the established provider messaging contract.
+                  (cond
+                   ((null resume-notice))
+                   ;; The provider's launch receipt owns acknowledgement.
+                   (resume-with-notice)
+                   ((magnus-provider-operation-p
+                     current-instance 'send-with-acceptance)
+                    (magnus-process--queue-pending-rename-with-acceptance
+                     current-instance resume-notice original-pending-rename
+                     rename-target))
+                   (t
+                    (magnus-provider-call
+                     current-instance 'send resume-notice)
+                    (setq rename-acknowledged t)))))
+            (if resume-notice
+                (magnus-process--spawn-with-session
+                 instance session-id resume-notice)
+              (magnus-process--spawn-with-session instance session-id)))
+          (when rename-acknowledged
+            (magnus-process--acknowledge-pending-rename
+             instance original-pending-rename rename-target))
           (setq committed t))
       (unless committed
         (let* ((owner-runtime
@@ -939,7 +1038,8 @@ configured user-facing guidance are current."
                  :status original-status
                  :buffer (and (buffer-live-p original-buffer) original-buffer)
                  :session-id session-id
-                 :purged-at original-purged-at)
+                 :purged-at original-purged-at
+                 :pending-rename-from original-pending-rename)
               (error
                ;; As with directory moves, notification hooks run after
                ;; mutation.  Complete rollback directly without replacing the
@@ -948,7 +1048,9 @@ configured user-facing guidance are current."
                      (magnus-instance-buffer instance)
                      (and (buffer-live-p original-buffer) original-buffer)
                      (magnus-instance-session-id instance) session-id
-                     (magnus-instance-purged-at instance) original-purged-at)
+                     (magnus-instance-purged-at instance) original-purged-at
+                     (magnus-instance-pending-rename-from instance)
+                     original-pending-rename)
                (message
                 "Magnus: resurrection registry rollback failed for %s: %s"
                 (magnus-instance-name instance)
@@ -1191,18 +1293,29 @@ underscores with hyphens."
   (let ((path (magnus-coord--normalized-directory directory)))
     (replace-regexp-in-string "[/ ~_]+" "-" path)))
 
-(defun magnus-process--spawn-with-session (instance &optional session-id)
-  "Spawn Claude Code for INSTANCE, optionally resuming SESSION-ID.
-The complete current Magnus onboarding is part of process launch, before the
-delayed ready notification."
+(defun magnus-process--spawn-with-session
+    (instance session-id &optional resume-notice)
+  "Transparently resume Claude Code INSTANCE at SESSION-ID.
+RESUME-NOTICE, when non-nil, is an event-specific delta such as an archived
+rename.  Ordinary process restart and archive resurrection inject no turn."
+  (unless (and (stringp session-id) (not (string-empty-p session-id)))
+    (user-error "A Claude session ID is required for transparent resume"))
   (let* ((name (magnus-instance-name instance))
          (directory (magnus-instance-directory instance))
+         (rename-old-name
+          (and resume-notice
+               (magnus-instance-pending-rename-from instance)))
+         (rename-accepted
+          (when rename-old-name
+            (lambda ()
+              (magnus-process--acknowledge-pending-rename
+               instance rename-old-name name))))
          (buffer-name (format "*claude:%s*" name))
          (default-directory directory)
          (command
-          (magnus-process--claude-command-with-onboarding
-           instance
-           (when session-id (list "--resume" session-id))))
+          (apply #'magnus-process--claude-command
+                 (append (list "--resume" session-id)
+                         (when resume-notice (list resume-notice)))))
          buffer
          owner-process
          ready-timer
@@ -1220,12 +1333,17 @@ delayed ready notification."
                                    :buffer buffer
                                    :status 'running)
           (magnus-process--setup-sentinel instance buffer)
-          ;; First-turn ordering is already guaranteed by COMMAND.  This timer
-          ;; only publishes the existing delayed readiness notification.
+          ;; First-turn ordering is guaranteed by COMMAND.  Keep a durable
+          ;; rename pending until this exact runtime survives to readiness,
+          ;; then acknowledge it before publishing ready-hook deliveries.
           (setq ready-timer
-                (run-with-timer
-                 5 nil #'magnus-process--run-ready-hook
-                 instance buffer owner-process))
+                (if rename-accepted
+                    (run-with-timer
+                     5 nil #'magnus-process--run-ready-hook
+                     instance buffer owner-process rename-accepted)
+                  (run-with-timer
+                   5 nil #'magnus-process--run-ready-hook
+                   instance buffer owner-process)))
           (setq spawned t)
           buffer)
       (unless spawned
@@ -1257,6 +1375,43 @@ delayed ready notification."
       (magnus-terminal--discard-buffer buffer)))
   (magnus-instances-update instance :buffer nil :status 'stopped))
 
+(defun magnus-process--switch-to-external (instance)
+  "Visit external-provider INSTANCE and deliver any durable rename first."
+  (let* ((old-name (magnus-instance-pending-rename-from instance))
+         (new-name (magnus-instance-name instance))
+         (notice (magnus-process--pending-resume-notice instance)))
+    (if (null notice)
+        (magnus-provider-call instance 'switch-to)
+      (unless (magnus-instance-session-id instance)
+        (user-error "Pending rename for '%s' has no provider session"
+                    new-name))
+      (let ((running (magnus-provider-call instance 'running-p)))
+        (cond
+         ((and (not running)
+               (magnus-provider-operation-p
+                instance 'resume-with-message))
+          (magnus-provider-call
+           instance 'resume-with-message notice
+           (lambda ()
+             (magnus-process--acknowledge-pending-rename-safely
+              instance old-name new-name)))
+          (unless (magnus-provider-call instance 'running-p)
+            (error "Provider `%s' did not start while restoring `%s'"
+                   (magnus-instance-provider instance) new-name)))
+         (t
+          (unless running
+            (magnus-provider-call instance 'resume))
+          (let ((current (magnus-process--current-instance instance)))
+            (if (magnus-provider-operation-p
+                 current 'send-with-acceptance)
+                (magnus-process--queue-pending-rename-with-acceptance
+                 current notice old-name new-name)
+              (magnus-provider-call current 'send notice)
+              (magnus-process--acknowledge-pending-rename-safely
+               current old-name new-name)))))
+        (magnus-provider-call
+         (magnus-process--current-instance instance) 'switch-to)))))
+
 (defun magnus-process-switch-to (instance)
   "Switch to the buffer for INSTANCE.
 If the buffer is nil (e.g. after Emacs restart), resume the session
@@ -1282,8 +1437,13 @@ if a session ID exists, or spawn a fresh process."
         (user-error "Headless output for '%s' is no longer available"
                     (magnus-instance-name instance))))
      ((magnus-provider-external-p instance)
-      (magnus-provider-call instance 'switch-to))
+      (magnus-process--switch-to-external instance))
      ((magnus-process-running-p instance)
+      (when-let ((notice (magnus-process--pending-resume-notice instance)))
+        (magnus-process--queue-local-pending-rename-with-acceptance
+         instance notice
+         (magnus-instance-pending-rename-from instance)
+         (magnus-instance-name instance)))
       (switch-to-buffer buffer))
      (t
       ;; A sentinel can leave a readable but process-less vterm behind.  It is
@@ -1291,7 +1451,10 @@ if a session ID exists, or spawn a fresh process."
       (when (or buffer (memq status '(running suspended)))
         (magnus-process--discard-stale-local-buffer instance))
       (if-let ((session-id (magnus-instance-session-id instance)))
-          (magnus-process--spawn-with-session instance session-id)
+          (if-let ((notice (magnus-process--pending-resume-notice instance)))
+              (magnus-process--spawn-with-session
+               instance session-id notice)
+            (magnus-process--spawn-with-session instance session-id))
         (magnus-process--spawn instance))
       (switch-to-buffer (magnus-instance-buffer instance))))))
 

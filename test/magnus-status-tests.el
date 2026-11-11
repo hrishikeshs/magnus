@@ -383,7 +383,7 @@ ARGUMENTS are passed to `magnus-review--create'."
          (instance
           (magnus-instance--create
            :id "archived" :name "quick-wren" :directory directory
-           :status 'purged))
+           :status 'purged :session-id "provider-session"))
          (magnus-instances (list instance))
          (magnus-instances-changed-hook nil)
          (old-memory (magnus-onboarding-memory-path instance)))
@@ -393,6 +393,8 @@ ARGUMENTS are passed to `magnus-review--create'."
           (with-temp-file old-memory (insert "I remember."))
           (magnus-status--rename-archived-instance instance "wise-deer")
           (should (equal (magnus-instance-name instance) "wise-deer"))
+          (should
+           (equal (magnus-instance-pending-rename-from instance) "quick-wren"))
           (should-not (file-exists-p old-memory))
           (should
            (equal
@@ -403,6 +405,25 @@ ARGUMENTS are passed to `magnus-review--create'."
           (should (string-match-p
                    "You have been here before"
                    (magnus-onboarding-prompt instance))))
+      (delete-directory directory t))))
+
+(ert-deftest magnus-status-rename-coalesces-the-undelivered-identity-delta ()
+  (let* ((directory (make-temp-file "magnus-status-rename-chain-" t))
+         (instance
+          (magnus-instance--create
+           :id "rename-chain" :name "quick-wren" :directory directory
+           :status 'purged :session-id "provider-session"))
+         (magnus-instances (list instance))
+         (magnus-instances-changed-hook nil))
+    (unwind-protect
+        (progn
+          (magnus-status--rename-archived-instance instance "wise-deer")
+          (magnus-status--rename-archived-instance instance "calm-owl")
+          (should
+           (equal (magnus-instance-pending-rename-from instance) "quick-wren"))
+          ;; Returning to the provider-visible name cancels the pending event.
+          (magnus-status--rename-archived-instance instance "quick-wren")
+          (should-not (magnus-instance-pending-rename-from instance)))
       (delete-directory directory t))))
 
 (ert-deftest magnus-status-rename-rejects-project-name-and-home-collisions ()
@@ -448,6 +469,7 @@ ARGUMENTS are passed to `magnus-review--create'."
           (should-error
            (magnus-status--rename-archived-instance instance "wise-deer"))
           (should (equal (magnus-instance-name instance) "quick-wren"))
+          (should-not (magnus-instance-pending-rename-from instance))
           (should (file-exists-p old-memory))
           (should-not
            (file-exists-p

@@ -1512,14 +1512,13 @@ When PRE-EXISTING is non-nil, seed NAME's Active Work row."
           (kill-buffer failed-buffer))
         (delete-directory directory t)))))
 
-(ert-deftest magnus-process-resurrect-rolls-back-external-onboarding-failure ()
+(ert-deftest magnus-process-resurrection-external-is-conversationally-transparent ()
   (magnus-test-process-lifecycle--isolated
-    (let* ((directory (make-temp-file "magnus-resurrect-send-failure-" t))
+    (let* ((directory (make-temp-file "magnus-resurrect-transparent-" t))
            (instance
             (magnus-instances-create directory "archived-codex" 'codex))
            runtime
            process
-           stopped-watchers
            operations)
       (unwind-protect
           (progn
@@ -1529,51 +1528,101 @@ When PRE-EXISTING is non-nil, seed NAME's Active Work row."
             (cl-letf
                 (((symbol-function 'magnus-provider-external-p)
                   (lambda (_candidate) t))
-                 ((symbol-function 'magnus-coord-register-agent)
-                  (lambda (project _candidate)
-                    (magnus-test-process-lifecycle--claim-coord project 52)))
+                 ((symbol-function 'magnus-coord-register-agent) #'ignore)
                  ((symbol-function 'magnus-provider-call)
-                  (lambda (candidate operation &rest _arguments)
-                    (push operation operations)
+                  (lambda (candidate operation &rest arguments)
+                    (push (cons operation arguments) operations)
                     (pcase operation
                       ('resume
                        (setq runtime
                              (generate-new-buffer
-                              " *failed-resurrect-send*"))
+                              " *transparent-resurrect*"))
                        (setq process
                              (make-pipe-process
                               :name (generate-new-buffer-name
-                                     "failed-resurrect-send")
+                                     "transparent-resurrect")
                               :buffer runtime :noquery t))
                        (magnus-process--record-transaction-runtime
                         runtime process)
                        (magnus-instances-update
-                        candidate :status 'running :buffer runtime))
-                      ('send (error "onboarding enqueue failed"))
+                        candidate :status 'running :buffer runtime)
+                       runtime)
+                      (_ (ert-fail (format "Unexpected provider operation: %S"
+                                           operation)))))))
+              (magnus-process-resurrect-purged instance))
+            (should (equal (nreverse operations) '((resume))))
+            (should (eq (magnus-instance-status instance) 'running))
+            (should (eq (magnus-instance-buffer instance) runtime))
+            (should (equal (magnus-instance-session-id instance)
+                           "codex-session"))
+            (should-not (magnus-instance-purged-at instance)))
+        (when (process-live-p process)
+          (delete-process process))
+        (when (buffer-live-p runtime)
+          (kill-buffer runtime))
+        (delete-directory directory t)))))
+
+(ert-deftest magnus-process-resurrection-retains-rename-after-send-failure ()
+  (magnus-test-process-lifecycle--isolated
+    (let* ((directory (make-temp-file "magnus-resurrect-rename-failure-" t))
+           (instance
+            (magnus-instances-create directory "renamed-codex" 'codex))
+           runtime
+           process
+           operations)
+      (unwind-protect
+          (progn
+            (magnus-instances-update
+             instance :status 'purged :session-id "codex-session"
+             :purged-at 654.0 :pending-rename-from "former-codex")
+            (cl-letf
+                (((symbol-function 'magnus-provider-external-p)
+                  (lambda (_candidate) t))
+                 ((symbol-function 'magnus-provider-operation-p)
+                  (lambda (&rest _arguments) nil))
+                 ((symbol-function 'magnus-coord-register-agent)
+                  (lambda (project _candidate)
+                    (magnus-test-process-lifecycle--claim-coord project 54)))
+                 ((symbol-function 'magnus-provider-call)
+                  (lambda (candidate operation &rest arguments)
+                    (push operation operations)
+                    (pcase operation
+                      ('resume
+                       (should-not arguments)
+                       (setq runtime
+                             (generate-new-buffer
+                              " *failed-resurrect-rename*"))
+                       (setq process
+                             (make-pipe-process
+                              :name (generate-new-buffer-name
+                                     "failed-resurrect-rename")
+                              :buffer runtime :noquery t))
+                       (magnus-process--record-transaction-runtime
+                        runtime process)
+                       (magnus-instances-update
+                        candidate :status 'running :buffer runtime)
+                       runtime)
+                      ('send (error "rename delivery failed"))
                       ('stop
                        (magnus-instances-update
                         candidate :status 'stopped :buffer nil)))))
                  ((symbol-function 'magnus-coord-stop-watching)
                   (lambda (project)
-                    (push project stopped-watchers)
                     (setq magnus-coord--watched-dirs
                           (delete project magnus-coord--watched-dirs)))))
               (let ((err
                      (should-error
                       (magnus-process-resurrect-purged instance))))
                 (should
-                 (string-match-p "onboarding enqueue failed"
+                 (string-match-p "rename delivery failed"
                                  (error-message-string err)))))
             (should (equal (nreverse operations) '(resume send stop)))
-            (should
-             (equal stopped-watchers
-                    (list (magnus-test-process-lifecycle--coord-key
-                           directory))))
             (should (eq (magnus-instance-status instance) 'purged))
             (should-not (magnus-instance-buffer instance))
-            (should (equal (magnus-instance-session-id instance)
-                           "codex-session"))
-            (should (= (magnus-instance-purged-at instance) 321.0))
+            (should (= (magnus-instance-purged-at instance) 654.0))
+            (should
+             (equal (magnus-instance-pending-rename-from instance)
+                    "former-codex"))
             (should-not (process-live-p process))
             (should-not (buffer-live-p runtime)))
         (when (process-live-p process)
@@ -1636,31 +1685,32 @@ When PRE-EXISTING is non-nil, seed NAME's Active Work row."
           (kill-buffer failed-buffer))
         (delete-directory directory t)))))
 
-(ert-deftest magnus-process-resurrection-external-sends-complete-onboarding ()
+(ert-deftest magnus-process-resurrection-external-sends-only-pending-rename ()
   (magnus-test-process-lifecycle--isolated
-    (let* ((directory (make-temp-file "magnus-resurrect-onboarding-" t))
-           (magnus-onboarding-user-instructions
-            "Custom restored response guidance.")
+    (let* ((directory (make-temp-file "magnus-resurrect-rename-" t))
            (instance
             (magnus-instances-create directory "resurrected-codex" 'codex))
            runtime
            process
            operations
-           onboarding)
+           rename-notice)
       (unwind-protect
           (progn
             (magnus-instances-update
              instance :status 'purged :session-id "codex-resume-me"
-             :purged-at 123.0)
+             :purged-at 123.0 :pending-rename-from "former-codex")
             (cl-letf
                 (((symbol-function 'magnus-provider-external-p)
                   (lambda (_candidate) t))
+                 ((symbol-function 'magnus-provider-operation-p)
+                  (lambda (&rest _arguments) nil))
                  ((symbol-function 'magnus-coord-register-agent) #'ignore)
                  ((symbol-function 'magnus-provider-call)
                   (lambda (candidate operation &rest arguments)
                     (push operation operations)
                     (pcase operation
                       ('resume
+                       (should-not arguments)
                        (setq runtime
                              (generate-new-buffer
                               " *magnus-resurrected-codex*"))
@@ -1676,30 +1726,170 @@ When PRE-EXISTING is non-nil, seed NAME's Active Work row."
                        runtime)
                       ('send
                        (should (eq (magnus-instance-buffer candidate) runtime))
-                       (setq onboarding (car arguments)))
+                       (setq rename-notice (car arguments)))
                       (_ (ert-fail (format "Unexpected provider operation: %S"
                                            operation)))))))
               (magnus-process-resurrect-purged instance))
             (should (equal (nreverse operations) '(resume send)))
-            (dolist (required
-                     (list "You are resurrected-codex"
-                           (magnus-instance-id instance)
-                           ".claude/agents/resurrected-codex/memory.md"
-                           ".magnus-coord.md"
-                           ".claude/magnus-instructions.md"
-                           "Authorization boundary"
-                           "User-visible engineering journal"
-                           "[thinking]...[end-thinking]"))
-              (should (string-match-p (regexp-quote required) onboarding)))
-            (should-not
-             (string-match-p "Custom restored response guidance" onboarding))
+            (let ((notice rename-notice))
+              (dolist (required
+                       (list "Magnus identity update"
+                             "former-codex"
+                             "resurrected-codex"
+                             (magnus-instance-id instance)
+                             ".claude/agents/resurrected-codex/"))
+                (should (string-match-p (regexp-quote required) notice)))
+              (dolist (replayed
+                       '("Get oriented"
+                         ".magnus-coord.md"
+                         "Authorization boundary"
+                         "User-visible engineering journal"
+                         "[thinking]"))
+                (should-not (string-match-p (regexp-quote replayed) notice))))
             (should (eq (magnus-instance-status instance) 'running))
-            (should-not (magnus-instance-purged-at instance)))
+            (should-not (magnus-instance-purged-at instance))
+            (should-not (magnus-instance-pending-rename-from instance)))
         (when (process-live-p process)
           (delete-process process))
         (when (buffer-live-p runtime)
           (kill-buffer runtime))
         (delete-directory directory t)))))
+
+(ert-deftest magnus-process-resurrection-first-turn-rename-awaits-acceptance ()
+  (magnus-test-process-lifecycle--isolated
+    (let* ((directory (make-temp-file "magnus-resurrect-first-turn-" t))
+           (instance
+            (magnus-instances-create directory "renamed-codex" 'codex))
+           runtime
+           process
+           accepted
+           notice
+           operations)
+      (unwind-protect
+          (progn
+            (magnus-instances-update
+             instance :status 'purged :session-id "codex-session"
+             :purged-at 123.0 :pending-rename-from "former-codex")
+            (cl-letf
+                (((symbol-function 'magnus-provider-external-p)
+                  (lambda (_candidate) t))
+                 ((symbol-function 'magnus-provider-operation-p)
+                  (lambda (_candidate operation)
+                    (eq operation 'resume-with-message)))
+                 ((symbol-function 'magnus-coord-register-agent) #'ignore)
+                 ((symbol-function 'magnus-provider-call)
+                  (lambda (candidate operation &rest arguments)
+                    (push operation operations)
+                    (pcase operation
+                      ('resume-with-message
+                       (setq notice (car arguments)
+                             accepted (cadr arguments)
+                             runtime
+                             (generate-new-buffer
+                              " *magnus-first-turn-rename*"))
+                       (setq process
+                             (make-pipe-process
+                              :name (generate-new-buffer-name
+                                     "magnus-first-turn-rename")
+                              :buffer runtime :noquery t))
+                       (magnus-process--record-transaction-runtime
+                        runtime process)
+                       (magnus-instances-update
+                        candidate :status 'running :buffer runtime)
+                       runtime)
+                      (_ (ert-fail (format "Unexpected provider operation: %S"
+                                           operation)))))))
+              (magnus-process-resurrect-purged instance))
+            (should (equal (nreverse operations) '(resume-with-message)))
+            (should (functionp accepted))
+            (should (string-match-p "former-codex" notice))
+            (should
+             (equal (magnus-instance-pending-rename-from instance)
+                    "former-codex"))
+            (funcall accepted)
+            (should-not (magnus-instance-pending-rename-from instance)))
+        (when (process-live-p process)
+          (delete-process process))
+        (when (buffer-live-p runtime)
+          (kill-buffer runtime))
+        (delete-directory directory t)))))
+
+(ert-deftest magnus-process-switch-recovers-stopped-pending-rename ()
+  (magnus-test-process-lifecycle--isolated
+    (let ((instance
+           (magnus-instances-create default-directory "restored-codex" 'codex))
+          running
+          accepted
+          notice
+          operations)
+      (magnus-instances-update
+       instance :status 'stopped :session-id "codex-session"
+       :pending-rename-from "former-codex")
+      (cl-letf
+          (((symbol-function 'magnus-provider-external-p)
+            (lambda (_candidate) t))
+           ((symbol-function 'magnus-provider-operation-p)
+            (lambda (_candidate operation)
+              (eq operation 'resume-with-message)))
+           ((symbol-function 'magnus-provider-call)
+            (lambda (candidate operation &rest arguments)
+              (push operation operations)
+              (pcase operation
+                ('running-p running)
+                ('resume-with-message
+                 (setq notice (car arguments)
+                       accepted (cadr arguments)
+                       running t)
+                 (magnus-instances-update candidate :status 'running))
+                ('switch-to t)
+                (_ (ert-fail (format "Unexpected provider operation: %S"
+                                     operation)))))))
+        (magnus-process-switch-to instance))
+      (should
+       (equal (nreverse operations)
+              '(running-p resume-with-message running-p switch-to)))
+      (should (string-match-p "former-codex" notice))
+      (should
+       (equal (magnus-instance-pending-rename-from instance)
+              "former-codex"))
+      (funcall accepted)
+      (should-not (magnus-instance-pending-rename-from instance)))))
+
+(ert-deftest magnus-process-switch-retains-queued-rename-until-acceptance ()
+  (magnus-test-process-lifecycle--isolated
+    (let ((instance
+           (magnus-instances-create default-directory "running-codex" 'codex))
+          accepted
+          operations)
+      (magnus-instances-update
+       instance :status 'running :session-id "codex-session"
+       :pending-rename-from "former-codex")
+      (cl-letf
+          (((symbol-function 'magnus-provider-external-p)
+            (lambda (_candidate) t))
+           ((symbol-function 'magnus-provider-operation-p)
+            (lambda (_candidate operation)
+              (eq operation 'send-with-acceptance)))
+           ((symbol-function 'magnus-provider-call)
+            (lambda (_candidate operation &rest arguments)
+              (push operation operations)
+              (pcase operation
+                ('running-p t)
+                ('send-with-acceptance
+                 (setq accepted (cadr arguments))
+                 'queued)
+                ('switch-to t)
+                (_ (ert-fail (format "Unexpected provider operation: %S"
+                                     operation)))))))
+        (magnus-process-switch-to instance))
+      (should
+       (equal (nreverse operations)
+              '(running-p send-with-acceptance switch-to)))
+      (should
+       (equal (magnus-instance-pending-rename-from instance)
+              "former-codex"))
+      (funcall accepted)
+      (should-not (magnus-instance-pending-rename-from instance)))))
 
 (ert-deftest magnus-process-resurrection-never-onboards-reentrant-replacement ()
   (magnus-test-process-lifecycle--isolated
@@ -2227,11 +2417,9 @@ When PRE-EXISTING is non-nil, seed NAME's Active Work row."
         (when (buffer-live-p replacement)
           (kill-buffer replacement))))))
 
-(ert-deftest magnus-process-resumed-claude-launches-complete-onboarding-first ()
+(ert-deftest magnus-process-resumed-claude-injects-no-conversational-turn ()
   (magnus-test-process-lifecycle--isolated
     (let* ((directory (make-temp-file "magnus-resumed-claude-onboarding-" t))
-           (magnus-onboarding-user-instructions
-            "Custom Claude restore guidance.")
            (instance
             (magnus-instances-create directory "restored-claude"))
            (terminal
@@ -2250,6 +2438,9 @@ When PRE-EXISTING is non-nil, seed NAME's Active Work row."
                   (lambda (_name command &optional _environment)
                     (setq direct-command command)
                     terminal))
+                 ((symbol-function 'magnus-process--onboarding-message)
+                  (lambda (&rest _arguments)
+                    (ert-fail "Resume must not rebuild onboarding")))
                  ((symbol-function 'magnus-process--claude-command)
                   (lambda (&rest arguments)
                     (setq command-arguments arguments)
@@ -2264,26 +2455,74 @@ When PRE-EXISTING is non-nil, seed NAME's Active Work row."
                     instance "claude-session")
                    terminal)))
             (should (equal direct-command "safe-direct-command"))
-            (should (equal (seq-take command-arguments 2)
+            (should (equal command-arguments
                            '("--resume" "claude-session")))
-            (should (= (length command-arguments) 3))
-            (let ((onboarding (nth 2 command-arguments)))
-              (should-not (string-match-p "[\n\r]" onboarding))
-              (dolist (required
-                       (list "You are restored-claude"
-                             (magnus-instance-id instance)
-                             ".claude/agents/restored-claude/memory.md"
-                             ".magnus-coord.md"
-                             "Authorization boundary"
-                             "Custom Claude restore guidance."))
-                (should
-                 (string-match-p (regexp-quote required) onboarding)))
-              (should-not
-               (string-match-p "visible working notebook" onboarding)))
             (should (= (length scheduled) 1))
             (should (equal (car scheduled)
                            (cons #'magnus-process--run-ready-hook
                                  (list instance terminal process)))))
+        (when (process-live-p process)
+          (delete-process process))
+        (when (buffer-live-p terminal)
+          (kill-buffer terminal))
+        (delete-directory directory t)))))
+
+(ert-deftest magnus-process-resurrected-claude-launches-only-rename-delta ()
+  (magnus-test-process-lifecycle--isolated
+    (let* ((directory (make-temp-file "magnus-resurrected-claude-rename-" t))
+           (instance
+            (magnus-instances-create directory "renamed-claude"))
+           (terminal
+            (generate-new-buffer " *magnus-renamed-claude*"))
+           (process
+            (make-pipe-process
+             :name (generate-new-buffer-name "magnus-renamed-claude")
+             :buffer terminal :noquery t))
+           command-arguments
+           scheduled)
+      (unwind-protect
+          (progn
+            (magnus-instances-update
+             instance :status 'purged :session-id "claude-session"
+             :purged-at 432.0 :pending-rename-from "former-claude")
+            (cl-letf
+                (((symbol-function 'magnus-provider-external-p)
+                  (lambda (_candidate) nil))
+                 ((symbol-function 'magnus-coord-register-agent) #'ignore)
+                 ((symbol-function 'magnus-terminal-create-command-buffer)
+                  (lambda (_name _command &optional _environment) terminal))
+                 ((symbol-function 'magnus-process--claude-command)
+                  (lambda (&rest arguments)
+                    (setq command-arguments arguments)
+                    "safe-direct-command"))
+                 ((symbol-function 'magnus-process--setup-sentinel) #'ignore)
+                 ((symbol-function 'run-with-timer)
+                  (lambda (_seconds _repeat function &rest arguments)
+                    (push (cons function arguments) scheduled)
+                    nil)))
+              (magnus-process-resurrect-purged instance))
+            (should (equal (seq-take command-arguments 2)
+                           '("--resume" "claude-session")))
+            (should (= (length command-arguments) 3))
+            (let ((notice (nth 2 command-arguments)))
+              (dolist (required
+                       (list "Magnus identity update"
+                             "former-claude"
+                             "renamed-claude"
+                             (magnus-instance-id instance)))
+                (should (string-match-p (regexp-quote required) notice)))
+              (should-not (string-match-p "Get oriented" notice))
+              (should-not (string-match-p "Authorization boundary" notice)))
+            (should (eq (magnus-instance-status instance) 'running))
+            (should-not (magnus-instance-purged-at instance))
+            ;; The launch owns the first turn, but the durable event remains
+            ;; until this exact runtime reaches its ready callback.
+            (should
+             (equal (magnus-instance-pending-rename-from instance)
+                    "former-claude"))
+            (should (= (length scheduled) 1))
+            (apply (caar scheduled) (cdar scheduled))
+            (should-not (magnus-instance-pending-rename-from instance)))
         (when (process-live-p process)
           (delete-process process))
         (when (buffer-live-p terminal)

@@ -42,13 +42,16 @@ provider-neutral, resource-bounded agent workspace.
 - AI-generated dashboard fortunes are now opt-in; static messages remain the
   default.
 - `magnus-onboarding-user-instructions` can replace only Claude Code's
-  user-facing response guidance in onboarding and archive resurrection while
-  Magnus retains generated identity, memory, coordination, summon, and
-  authorization context.  Codex and third-party providers keep Magnus's
-  standard response guidance.
+  user-facing response guidance for new provider sessions while Magnus retains
+  generated identity, memory, coordination, summon, and authorization context.
+  Codex and third-party providers keep Magnus's standard response guidance.
 - Interactive Claude onboarding is now the positional first turn of the native
   TUI launch instead of a delayed terminal paste, so immediate user input and
   coordination messages cannot overtake it.
+- Archive resurrection and process restart now resume the existing Claude or
+  Codex conversation without injecting another onboarding turn.  A separately
+  requested archived rename delivers only its pending identity change and
+  remains durable until its resumed terminal accepts it.
 
 ### Resource hardening
 

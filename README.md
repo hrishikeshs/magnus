@@ -73,10 +73,15 @@ CLI supports; Magnus's shared layers continue to provide identity, persistence,
 coordination, attention, and status.
 
 Interactive adapters that support archive resurrection provide both `resume`
-and `send`. The resume operation returns its terminal buffer or records the
-exact runtime owner during startup, allowing Magnus to reapply onboarding
-without steering a replacement process. Follow the Codex adapter's transaction
-owner pattern.
+and `send`. An ordinary resume must preserve the provider conversation without
+injecting a Magnus turn; Magnus uses `send` only for a specific pending event
+such as an archived rename. The resume operation returns its terminal buffer
+or records the exact runtime owner during startup. Follow the Codex adapter's
+transaction-owner pattern. Adapters may additionally provide
+`resume-with-message` and `send-with-acceptance` so Magnus can preserve
+first-turn ordering and retain a durable event until the terminal accepts it.
+Both receive the message and an acknowledgement callback after the instance;
+the adapter calls that callback only after its exact runtime accepts the input.
 
 See [`magnus-provider.el`](magnus-provider.el) for the small dispatch interface
 and [`magnus-provider-codex.el`](magnus-provider-codex.el) for a complete

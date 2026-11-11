@@ -149,6 +149,12 @@ deliberately point into a shared directory."
     (unless (magnus-persistence--timestamp-p
              (magnus-instance-purged-at instance))
       (error "Invalid Magnus state record %d: invalid archive timestamp" index))
+    (when-let ((old-name (magnus-instance-pending-rename-from instance)))
+      (unless (magnus-instances-valid-name-p old-name)
+        (error "Invalid Magnus state record %d: invalid pending rename" index))
+      ;; A completed or manually repaired rename has no delta left to deliver.
+      (when (string= old-name (magnus-instance-name instance))
+        (setf (magnus-instance-pending-rename-from instance) nil)))
     instance))
 
 (defun magnus-persistence--deserialize-state (state)

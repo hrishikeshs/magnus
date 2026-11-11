@@ -34,7 +34,10 @@
   (purged-at nil :documentation "Timestamp when instance was archived (purged).")
   ;; Keep newly persisted slots at the end so existing accessor offsets remain
   ;; stable when users reload Magnus in a long-lived Emacs.
-  (kind 'interactive :documentation "Instance kind: interactive or headless."))
+  (kind 'interactive :documentation "Instance kind: interactive or headless.")
+  (pending-rename-from nil
+                       :documentation
+                       "Prior provider-visible name awaiting a rename notice."))
 
 ;;; Registry
 
@@ -207,7 +210,9 @@ PROPERTIES is a plist of slot names and values."
         (:provider (setf (magnus-instance-provider instance) value))
         (:session-id (setf (magnus-instance-session-id instance) value))
         (:previous-session-id (setf (magnus-instance-previous-session-id instance) value))
-        (:purged-at (setf (magnus-instance-purged-at instance) value)))))
+        (:purged-at (setf (magnus-instance-purged-at instance) value))
+        (:pending-rename-from
+         (setf (magnus-instance-pending-rename-from instance) value)))))
   (run-hooks 'magnus-instances-changed-hook)
   instance)
 
@@ -253,7 +258,8 @@ Returns the new instance (not yet added to registry)."
         :session-id (magnus-instance-session-id instance)
         :previous-session-id (magnus-instance-previous-session-id instance)
         :status (magnus-instance-status instance)
-        :purged-at (magnus-instance-purged-at instance)))
+        :purged-at (magnus-instance-purged-at instance)
+        :pending-rename-from (magnus-instance-pending-rename-from instance)))
 
 (defun magnus-instances-deserialize (plist)
   "Deserialize PLIST to an instance."
@@ -274,7 +280,8 @@ Returns the new instance (not yet added to registry)."
    :status (or (plist-get plist :status) 'stopped)
    :session-id (plist-get plist :session-id)
    :previous-session-id (plist-get plist :previous-session-id)
-   :purged-at (plist-get plist :purged-at)))
+   :purged-at (plist-get plist :purged-at)
+   :pending-rename-from (plist-get plist :pending-rename-from)))
 
 (provide 'magnus-instances)
 ;;; magnus-instances.el ends here
