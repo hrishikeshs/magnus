@@ -51,8 +51,10 @@ provider-neutral, resource-bounded agent workspace.
 - Archive resurrection and process restart now resume the existing Claude or
   Codex conversation without injecting another onboarding turn.
 - Agent names are immutable after creation; use a new agent for a new identity.
-- Archived agents and review lineages are collapsed by default and can be
-  revealed with `U` in the status buffer.
+- Archived agent and review rows are summarized by default and can be revealed
+  with `U` in the status buffer.
+- Reviews, Coordination, and Archived agents headings support buffer-local
+  folding with `TAB` or `RET`, preserved across status refreshes.
 - `K` forgets one archived agent and `? !` forgets all of them. Magnus removes
   their resumable working identities while retaining complete memory homes and
   metadata under `~/.magnus/forgotten-agents/`.

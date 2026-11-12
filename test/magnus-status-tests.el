@@ -97,6 +97,95 @@ ARGUMENTS are passed to `magnus-review--create'."
   (should (eq (lookup-key magnus-status-mode-map (kbd "U"))
               'magnus-status-toggle-archived)))
 
+(ert-deftest magnus-status-folds-only-the-three-workspace-sections ()
+  (should (eq (lookup-key magnus-status-mode-map (kbd "TAB"))
+              'magnus-status-toggle-section))
+  (should (eq (lookup-key magnus-status-mode-map (kbd "<tab>"))
+              'magnus-status-toggle-section))
+  (should
+   (equal (mapcar #'car magnus-status--foldable-section-titles)
+          '(reviews coordination archived-agents)))
+  (with-temp-buffer
+    (magnus-status-mode)
+    (let ((inhibit-read-only t))
+      (dolist (section '(reviews coordination archived-agents))
+        (magnus-status--insert-foldable-heading section))
+      (insert "Instances\nMagnus\n"))
+    (goto-char (point-min))
+    (dolist (section '(reviews coordination archived-agents))
+      (should (eq (magnus-status--section-at-point) section))
+      (forward-line 1))
+    (should-not (magnus-status--section-at-point))
+    (forward-line 1)
+    (should-not (magnus-status--section-at-point))))
+
+(ert-deftest magnus-status-tab-and-return-toggle-section-headings ()
+  (with-temp-buffer
+    (magnus-status-mode)
+    (let ((inhibit-read-only t))
+      (magnus-status--insert-foldable-heading 'reviews)
+      (insert "Instances\n"))
+    (goto-char (point-min))
+    (cl-letf (((symbol-function 'magnus-status-refresh) #'ignore))
+      (magnus-status-toggle-section)
+      (should (equal magnus-status--collapsed-sections '(reviews)))
+      ;; RET retains its entity-visit command and dispatches only on a heading.
+      (magnus-status-visit)
+      (should-not magnus-status--collapsed-sections)
+      (forward-line 1)
+      (should-error (magnus-status-toggle-section) :type 'user-error)))
+  (let* ((instance
+          (magnus-instance--create
+           :id "active" :name "quick-wren" :status 'running))
+         (magnus-instances (list instance))
+         visited)
+    (with-temp-buffer
+      (insert (propertize "quick-wren" 'magnus-instance-id "active"))
+      (goto-char (point-min))
+      (cl-letf (((symbol-function 'magnus-process-switch-to)
+                 (lambda (selected) (setq visited selected))))
+        (magnus-status-visit)))
+    (should (eq visited instance))))
+
+(ert-deftest magnus-status-refresh-preserves-buffer-local-heading-state ()
+  (let* ((magnus-buffer-name " *magnus-fold-refresh-test*")
+         (buffer (get-buffer-create magnus-buffer-name))
+         shifted)
+    (unwind-protect
+        (cl-letf (((symbol-function 'magnus-status--insert-header)
+                   (lambda ()
+                     (insert (if shifted "Header\nShifted\n" "Header\n"))))
+                  ((symbol-function 'magnus-status--insert-instances)
+                   (lambda () (insert "Instances\n")))
+                  ((symbol-function 'magnus-status--insert-reviews)
+                   (lambda ()
+                     (insert "\n")
+                     (magnus-status--insert-foldable-heading 'reviews)
+                     (unless (magnus-status--section-collapsed-p 'reviews)
+                       (insert "review body\n"))))
+                  ((symbol-function 'magnus-status--insert-coordination)
+                   #'ignore)
+                  ((symbol-function 'magnus-status--insert-purged) #'ignore)
+                  ((symbol-function 'magnus-status--sync-review-animation)
+                   #'ignore))
+          (with-current-buffer buffer
+            (magnus-status-mode)
+            (magnus-status-refresh)
+            (goto-char (point-min))
+            (search-forward "Reviews")
+            (beginning-of-line)
+            (setq-local magnus-status--collapsed-sections '(reviews))
+            (setq shifted t)
+            (magnus-status-refresh)
+            (should (eq (magnus-status--section-at-point) 'reviews))
+            (should (looking-at-p "▸ Reviews"))
+            (should (equal magnus-status--collapsed-sections '(reviews))))
+          (with-temp-buffer
+            (magnus-status-mode)
+            (should-not magnus-status--collapsed-sections)))
+      (when (buffer-live-p buffer)
+        (kill-buffer buffer)))))
+
 (ert-deftest magnus-status-unbound-printable-key-explains-how-to-proceed ()
   (with-temp-buffer
     (magnus-status-mode)
@@ -251,6 +340,20 @@ ARGUMENTS are passed to `magnus-review--create'."
       (should-not (memq #'magnus-status--context-hint
                         eldoc-documentation-functions)))))
 
+(ert-deftest magnus-status-context-hints-describe-section-folding ()
+  (with-temp-buffer
+    (magnus-status-mode)
+    (let ((inhibit-read-only t))
+      (magnus-status--insert-foldable-heading 'coordination))
+    (goto-char (point-min))
+    (should
+     (equal (substring-no-properties (magnus-status--context-hint nil))
+            "Coordination — TAB or RET collapse"))
+    (setq magnus-status--collapsed-sections '(coordination))
+    (should
+     (equal (substring-no-properties (magnus-status--context-hint nil))
+            "Coordination — TAB or RET expand"))))
+
 (ert-deftest magnus-status-context-hints-preserve-unrelated-messages ()
   (let ((echo "Review completed for quick-wren")
         (eldoc-last-message "stale ElDoc hint")
@@ -375,7 +478,60 @@ ARGUMENTS are passed to `magnus-review--create'."
           (concat "Magnus — n/p navigate · c create Claude · "
                   "X create Codex · ? all actions")))))))
 
-(ert-deftest magnus-status-collapses-archived-history-by-default ()
+(ert-deftest magnus-status-folded-sections-omit-and-refresh-their-bodies ()
+  (let* ((review
+          (magnus-test-status--review-in-state
+           'running :id "active-review" :reviewer-name "keen-owl"
+           :author-name "quick-wren" :lifecycle 'open
+           :created-at 1 :updated-at 2))
+         (archived
+          (magnus-instance--create
+           :id "archived-agent" :name "wise-deer"
+           :directory "/tmp/project" :status 'purged
+           :purged-at (float-time)))
+         (magnus-instances (list archived))
+         (magnus-reviews (list review))
+         (magnus-review-runtime-state-function
+          #'magnus-test-status--runtime-state))
+    (cl-letf (((symbol-function 'magnus-status--get-project-directories)
+               (lambda () '("/project/")))
+              ((symbol-function 'magnus-coord-has-state-p) (lambda (_) t))
+              ((symbol-function 'magnus-coord-parse)
+               (lambda (_)
+                 '(:active nil
+                   :log ((:time "12:00" :agent "swift-hare"
+                          :message "coordination-marker")))))
+              ((symbol-function 'magnus--agents-index-get)
+               (lambda (&rest _) nil)))
+      (with-temp-buffer
+        (setq-local magnus-status--collapsed-sections
+                    '(reviews coordination archived-agents))
+        (let ((magnus-status-show-archived t))
+          (magnus-status--insert-reviews)
+          (magnus-status--insert-coordination)
+          (magnus-status--insert-purged))
+        (let ((text (buffer-string)))
+          (should (string-match-p "▸ Reviews" text))
+          (should (string-match-p "▸ Coordination" text))
+          (should (string-match-p "▸ Archived agents" text))
+          (should-not (string-match-p "keen-owl" text))
+          (should-not (string-match-p "coordination-marker" text))
+          (should-not (string-match-p "wise-deer" text)))
+        ;; Re-expansion renders the current model instead of revealing stale
+        ;; invisible rows.
+        (setq-local magnus-status--collapsed-sections nil)
+        (erase-buffer)
+        (let ((magnus-status-show-archived t))
+          (magnus-status--insert-reviews)
+          (magnus-status--insert-coordination)
+          (magnus-status--insert-purged))
+        (let ((text (buffer-string)))
+          (should (string-match-p "▾ Reviews" text))
+          (should (string-match-p "keen-owl" text))
+          (should (string-match-p "coordination-marker" text))
+          (should (string-match-p "wise-deer" text)))))))
+
+(ert-deftest magnus-status-summarizes-archived-history-by-default ()
   (let* ((instance
           (magnus-instance--create
            :id "archived-agent" :name "wise-deer" :directory "/tmp/project"
@@ -406,6 +562,20 @@ ARGUMENTS are passed to `magnus-review--create'."
         (let ((text (buffer-string)))
           (should (string-match-p "keen-owl" text))
           (should (string-match-p "wise-deer" text)))))))
+
+(ert-deftest magnus-status-archive-visibility-is-orthogonal-to-folding ()
+  (with-temp-buffer
+    (setq-local magnus-status--collapsed-sections '(reviews))
+    (let ((magnus-status-show-archived nil)
+          notice)
+      (cl-letf (((symbol-function 'magnus-status-refresh) #'ignore)
+                ((symbol-function 'message)
+                 (lambda (format-string &rest arguments)
+                   (setq notice (apply #'format format-string arguments)))))
+        (magnus-status-toggle-archived))
+      (should magnus-status-show-archived)
+      (should (equal magnus-status--collapsed-sections '(reviews)))
+      (should (string-match-p "hidden rows in collapsed sections" notice)))))
 
 (ert-deftest magnus-instances-create-rejects-a-workspace-name-collision ()
   (let* ((directory (make-temp-file "magnus-instance-name-" t))

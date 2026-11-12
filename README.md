@@ -229,9 +229,10 @@ The main interactive entry points are:
 | `M-x magnus-doctor` | Check dependencies, storage, and runtime health |
 | `M-x magnus-upgrade` | Reinstall Magnus with a guarded agent shutdown |
 
-Inside `*magnus*`, press `?` for the contextual command menu. See the full
-[command reference](docs/reference.md) for status, trace, context, and review
-commands.
+Inside `*magnus*`, press `?` for the contextual command menu. Reviews,
+Coordination, and Archived agents can be folded with `TAB` or `RET` on their
+headings. See the full [command reference](docs/reference.md) for status,
+trace, context, and review commands.
 
 ## Customization
 

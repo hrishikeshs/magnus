@@ -9,7 +9,8 @@ These commands are bound directly in `*magnus*`:
 
 | Key | Action |
 |-----|--------|
-| `RET` | Visit the agent or review at point |
+| `RET` | Visit the agent/review at point, or fold a supported heading |
+| `TAB` | Fold Reviews, Coordination, or Archived agents at point |
 | `c` | Create a Claude Code agent |
 | `X` | Create a Codex agent |
 | `v` | Request a review, or show actions for the review at point |
@@ -47,8 +48,10 @@ The `?` dispatcher additionally exposes:
 | `H` / `T` | Toggle health / attention monitoring |
 
 The minibuffer shows context-sensitive hints as point moves among agents,
-reviews, and review rounds. Set `magnus-status-show-context-hints` to nil to
-disable them.
+reviews, review rounds, and foldable headings. Reviews, Coordination, and
+Archived agents are the only foldable status sections; their buffer-local fold
+state survives automatic refreshes. Set `magnus-status-show-context-hints` to
+nil to disable the hints.
 
 ## Native agent lifecycle
 

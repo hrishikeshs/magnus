@@ -45,6 +45,7 @@
 ;;
 ;; Key bindings in magnus buffer:
 ;;   RET - Visit instance or review
+;;   TAB - Fold Reviews, Coordination, or Archived agents at point
 ;;   c   - Create a Claude Code instance
 ;;   X   - Create a Codex instance
 ;;   k   - Archive instance

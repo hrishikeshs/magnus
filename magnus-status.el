@@ -167,8 +167,48 @@ letting it dominate the working view.  Toggle this interactively with
 (defvar magnus-status--review-animation-frame 0
   "Index of the current active-review animation frame.")
 
+(defconst magnus-status--foldable-section-titles
+  '((reviews . "Reviews")
+    (coordination . "Coordination")
+    (archived-agents . "Archived agents"))
+  "Status sections that may be folded, with their display titles.")
+
+(defvar-local magnus-status--collapsed-sections nil
+  "Folded section identities in the current Magnus status buffer.")
+
 (defvar-local magnus-status--last-context-hint nil
   "Last echo-area string displayed by Magnus's ElDoc backend.")
+
+(defun magnus-status--section-title (section)
+  "Return the display title for foldable SECTION, or nil."
+  (alist-get section magnus-status--foldable-section-titles nil nil #'eq))
+
+(defun magnus-status--section-at-point ()
+  "Return the whitelisted foldable section at point, or nil."
+  (let ((section (get-text-property (point) 'magnus-status-section)))
+    (and (magnus-status--section-title section) section)))
+
+(defun magnus-status--section-collapsed-p (section)
+  "Return non-nil when SECTION is folded in the current status buffer."
+  (memq section magnus-status--collapsed-sections))
+
+(defun magnus-status--insert-foldable-heading (section)
+  "Insert the disclosure heading for whitelisted SECTION."
+  (let ((title (magnus-status--section-title section)))
+    (unless title
+      (error "Status section is not foldable: %S" section))
+    (insert
+     (propertize
+      (format "%s %s\n"
+              (if (magnus-status--section-collapsed-p section) "▸" "▾")
+              title)
+      'face 'magnus-status-section-heading
+      'magnus-status-section section
+      'help-echo
+      (format "%s with TAB or RET"
+              (if (magnus-status--section-collapsed-p section)
+                  "Expand" "Collapse"))
+      'rear-nonsticky t))))
 
 (defun magnus-status--context-hint-message (format-string &rest args)
   "Display an ElDoc message without replacing unrelated echo-area output.
@@ -198,11 +238,20 @@ own prior hint; ordinary command, timer, and process messages retain ownership."
 The displayed keys come from the active keymaps, so user rebindings remain
 truthful.  CALLBACK is accepted for ElDoc's documentation-function protocol."
   (when magnus-status-show-context-hints
-    (let* ((review (magnus-status--get-review-at-point))
+    (let* ((section (magnus-status--section-at-point))
+           (review (and (not section)
+                        (magnus-status--get-review-at-point)))
            (instance (and (not review)
+                          (not section)
                           (magnus-status--get-instance-at-point)))
            (hint
             (cond
+              (section
+               (format
+                "%s — \\[magnus-status-toggle-section] or \\[magnus-status-visit] %s"
+                (magnus-status--section-title section)
+                (if (magnus-status--section-collapsed-p section)
+                    "expand" "collapse")))
               (review
                (let* ((round (magnus-status--review-round-to-open review))
                       (identity
@@ -282,6 +331,8 @@ user to its actions instead."
 (defvar magnus-status-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "RET") #'magnus-status-visit)
+    (define-key map (kbd "TAB") #'magnus-status-toggle-section)
+    (define-key map (kbd "<tab>") #'magnus-status-toggle-section)
     (define-key map (kbd "c") #'magnus-status-create)
     (define-key map (kbd "X") #'magnus-transient-create-codex)
     (define-key map (kbd "k") #'magnus-status-archive)
@@ -330,7 +381,8 @@ user to its actions instead."
     (setq-local magnus-status--last-context-hint nil)
     ;; ElDoc already recognizes ordinary cursor motion.  Magnus's semantic
     ;; item motion uses package-specific command names, so register those too.
-    (eldoc-add-command 'magnus-status-next 'magnus-status-previous)
+    (eldoc-add-command 'magnus-status-next 'magnus-status-previous
+                       'magnus-status-toggle-section)
     (eldoc-mode 1))
   (add-hook 'magnus-instances-changed-hook #'magnus-status--maybe-refresh)
   (add-hook 'kill-buffer-hook #'magnus-status-stop-review-animation nil t)
@@ -371,7 +423,9 @@ user to its actions instead."
       (let ((inhibit-read-only t)
             (line (line-number-at-pos))
             (instance-id (get-text-property (point) 'magnus-instance-id))
-            (review-id (get-text-property (point) 'magnus-review-id)))
+            (review-id (get-text-property (point) 'magnus-review-id))
+            (section (magnus-status--section-at-point))
+            section-restored)
         (erase-buffer)
         (magnus-status--insert-header)
         (magnus-status--insert-instances)
@@ -379,6 +433,12 @@ user to its actions instead."
         (magnus-status--insert-coordination)
         (magnus-status--insert-purged)
         (cond
+         ((and section
+               (text-property-any (point-min) (point-max)
+                                  'magnus-status-section section))
+          (goto-char (text-property-any (point-min) (point-max)
+                                        'magnus-status-section section))
+          (setq section-restored t))
          ((and review-id
                (text-property-any (point-min) (point-max)
                                   'magnus-review-id review-id))
@@ -392,7 +452,8 @@ user to its actions instead."
          (t
           (goto-char (point-min))
           (forward-line (1- line))))
-        (magnus-status--goto-instance-line)
+        (unless section-restored
+          (magnus-status--goto-instance-line))
         (magnus-status--sync-review-animation)))))
 
 (defun magnus-status--revert (_ignore-auto _noconfirm)
@@ -553,28 +614,29 @@ user to its actions instead."
              (eq (magnus-review-lifecycle review) 'archived))
            all)))
     (insert "\n")
-    (insert (propertize "Reviews\n" 'face 'magnus-status-section-heading))
-    (if (or reviews archived)
-        (progn
-          (dolist (review reviews)
-            (magnus-status--insert-review review))
-          (when archived
-            (if magnus-status-show-archived
-                (progn
-                  (insert (propertize "  Archived reviews\n"
-                                      'face 'magnus-status-empty-hint))
-                  (dolist (review archived)
-                    (magnus-status--insert-review review)))
-              (insert
-               (propertize
-                (format "  %d archived review%s hidden — press 'U' to show\n"
-                        (length archived)
-                        (if (= (length archived) 1) "" "s"))
-                'face 'magnus-status-empty-hint)))))
-      (insert
-       (propertize
-        "  No reviews yet. On an agent, press 'v', then RET, to request one.\n"
-        'face 'magnus-status-empty-hint)))))
+    (magnus-status--insert-foldable-heading 'reviews)
+    (unless (magnus-status--section-collapsed-p 'reviews)
+      (if (or reviews archived)
+          (progn
+            (dolist (review reviews)
+              (magnus-status--insert-review review))
+            (when archived
+              (if magnus-status-show-archived
+                  (progn
+                    (insert (propertize "  Archived reviews\n"
+                                        'face 'magnus-status-empty-hint))
+                    (dolist (review archived)
+                      (magnus-status--insert-review review)))
+                (insert
+                 (propertize
+                  (format "  %d archived review%s hidden — press 'U' to show\n"
+                          (length archived)
+                          (if (= (length archived) 1) "" "s"))
+                  'face 'magnus-status-empty-hint)))))
+        (insert
+         (propertize
+          "  No reviews yet. On an agent, press 'v', then RET, to request one.\n"
+          'face 'magnus-status-empty-hint))))))
 
 (defun magnus-status--review-state-label (review round)
   "Return a concise state label for REVIEW and its latest ROUND."
@@ -825,16 +887,16 @@ ephemeral round and COMPLETED is the latest successful round."
   (let ((purged (magnus-instances-purged-list)))
     (when purged
       (insert "\n")
-      (insert (propertize "Archived agents\n"
-                          'face 'magnus-status-section-heading))
-      (if magnus-status-show-archived
-          (dolist (instance purged)
-            (magnus-status--insert-purged-instance instance))
-        (insert
-         (propertize
-          (format "  %d archived agent%s hidden — press 'U' to show\n"
-                  (length purged) (if (= (length purged) 1) "" "s"))
-          'face 'magnus-status-empty-hint))))))
+      (magnus-status--insert-foldable-heading 'archived-agents)
+      (unless (magnus-status--section-collapsed-p 'archived-agents)
+        (if magnus-status-show-archived
+            (dolist (instance purged)
+              (magnus-status--insert-purged-instance instance))
+          (insert
+           (propertize
+            (format "  %d archived agent%s hidden — press 'U' to show\n"
+                    (length purged) (if (= (length purged) 1) "" "s"))
+            'face 'magnus-status-empty-hint)))))))
 
 (defun magnus-status--insert-purged-instance (instance)
   "Insert a line for purged INSTANCE."
@@ -887,9 +949,10 @@ ephemeral round and COMPLETED is the latest successful round."
                      (magnus-status--get-project-directories))))
     (when directories
       (insert "\n")
-      (insert (propertize "Coordination\n" 'face 'magnus-status-section-heading))
-      (dolist (dir directories)
-        (magnus-status--insert-coordination-for-dir dir)))))
+      (magnus-status--insert-foldable-heading 'coordination)
+      (unless (magnus-status--section-collapsed-p 'coordination)
+        (dolist (dir directories)
+          (magnus-status--insert-coordination-for-dir dir))))))
 
 (defun magnus-status--get-project-directories ()
   "Get unique physical project directories from active instances."
@@ -977,7 +1040,8 @@ ephemeral round and COMPLETED is the latest successful round."
 
 (defun magnus-status--goto-instance-line ()
   "Move point to the nearest selectable instance or review row."
-  (unless (magnus-status--selection-key-at-point)
+  (unless (or (magnus-status--selection-key-at-point)
+              (magnus-status--section-at-point))
     (or (magnus-status--find-instance-forward)
         (magnus-status--find-instance-backward))))
 
@@ -1031,10 +1095,29 @@ ephemeral round and COMPLETED is the latest successful round."
 
 ;;; Commands
 
+(defun magnus-status-toggle-section ()
+  "Collapse or expand the foldable status section heading at point."
+  (interactive)
+  (let ((section (magnus-status--section-at-point)))
+    (unless section
+      (user-error
+       "Put point on Reviews, Coordination, or Archived agents to fold it"))
+    (if (magnus-status--section-collapsed-p section)
+        (setq magnus-status--collapsed-sections
+              (delq section magnus-status--collapsed-sections))
+      (push section magnus-status--collapsed-sections))
+    (magnus-status-refresh)
+    (message "%s %s"
+             (magnus-status--section-title section)
+             (if (magnus-status--section-collapsed-p section)
+                 "collapsed" "expanded"))))
+
 (defun magnus-status-visit ()
-  "Visit the instance or review lineage at point."
+  "Visit the entity at point, or toggle a foldable section heading."
   (interactive)
   (cond
+   ((magnus-status--section-at-point)
+    (magnus-status-toggle-section))
    ((magnus-status--get-review-at-point)
     (let* ((review (magnus-status--get-review-at-point))
            (round (magnus-status--review-round-to-open review)))
@@ -1127,8 +1210,12 @@ Stops the process but preserves the session ID for later resurrection."
   (interactive)
   (setq magnus-status-show-archived (not magnus-status-show-archived))
   (magnus-status-refresh)
-  (message "%s archived agents and reviews"
-           (if magnus-status-show-archived "Showing" "Hiding")))
+  (message "%s archived agents and reviews%s"
+           (if magnus-status-show-archived "Showing" "Hiding")
+           (if (or (magnus-status--section-collapsed-p 'reviews)
+                   (magnus-status--section-collapsed-p 'archived-agents))
+               " — hidden rows in collapsed sections appear when expanded"
+             "")))
 
 (defun magnus-status-context ()
   "Open the shared context buffer for the current project."

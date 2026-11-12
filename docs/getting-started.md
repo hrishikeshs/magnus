@@ -123,10 +123,11 @@ consumes `ESC` as a Meta prefix.
 ## 6. Read the status buffer
 
 The status buffer groups active agents, coordination state, review activity,
-and completed review lineages. Archived agents and reviews collapse into
-compact summaries by default; press `U` to reveal them. Agent rows show provider,
-lifecycle, directory, health, attention, active work, and any running review
-badge.
+and completed review lineages. Archived agents and reviews use compact
+summaries by default; press `U` to reveal their rows. Put point on Reviews,
+Coordination, or Archived agents and press `TAB` or `RET` to fold that entire
+section. Agent rows show provider, lifecycle, directory, health, attention,
+active work, and any running review badge.
 
 The minibuffer follows point with contextual hints. Direct keys cover the most
 common actions; `?` exposes everything through a Transient menu.
